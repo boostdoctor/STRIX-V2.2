@@ -644,7 +644,8 @@ void handleLine(char *line) {
   if (!strncmp(line, "SET:COILTYPE,", 13)) {
     int t = 0;
     if (sscanf(line + 13, "%d", &t) == 1) {
-      if (t < 0) t = 0; if (t > 2) t = 2;
+      if (t < 0) t = 0;
+      if (t > 2) t = 2;
       gCoilType = (uint8_t)t;
       /* Smart → constant duty; Dumb/Dist → constant charge time */
       if (gCoilType == 0) gCoilChargeMode = 0;
@@ -659,7 +660,8 @@ void handleLine(char *line) {
   if (!strncmp(line, "SET:COILMODE,", 13)) {
     int m = 0;
     if (sscanf(line + 13, "%d", &m) == 1) {
-      if (m < 0) m = 0; if (m > 1) m = 1;
+      if (m < 0) m = 0;
+      if (m > 1) m = 1;
       gCoilChargeMode = (uint8_t)m;
       char b[32];
       snprintf(b, sizeof b, "OK:COILMODE,%u\r\n", (unsigned)gCoilChargeMode);
@@ -682,7 +684,8 @@ void handleLine(char *line) {
   if (!strncmp(line, "SET:INJMODE,", 12)) {
     int m = 0;
     if (sscanf(line + 12, "%d", &m) == 1) {
-      if (m < 1) m = 1; if (m > 3) m = 3;
+      if (m < 1) m = 1;
+      if (m > 3) m = 3;
       gInjMode = (uint8_t)m;
       if ((gInjMode == 2 || gInjMode == 3) && gCamMode == 0) gCamMode = 1;
       uartWrite("OK:INJMODE\r\n");
