@@ -44,14 +44,14 @@ void ECU_CamCapture(uint32_t capt) {
     }
   }
 
-  /* Expected cam period ~ 1 crank rev (2-stroke phase) or 2 revs.
-   * Reject absurdly fast repeats already handled; reject if still spinning
-   * and edge is far outside 0.3×-3× expected window after lock. */
+  /* Cam home comes once per cam revolution = 2 crank revs. Once locked,
+   * anything arriving before 1.5 crank revs is noise: accepting it would
+   * re-zero cycleHalf mid-cycle and throw away 720deg phase. */
   if (camSynced && toothPeriodUs > 0 && gTeeth >= 2) {
-    uint32_t expUs = toothPeriodUs * (uint32_t)gTeeth; /* ~1 crank rev */
-    if (expUs < 20000UL) expUs = 20000UL;
+    uint32_t crankRevUs = toothPeriodUs * (uint32_t)gTeeth;
+    if (crankRevUs < 20000UL) crankRevUs = 20000UL;
     uint32_t dtCam = now - lastCamUs;
-    if (lastCamUs && dtCam < (expUs / 4UL)) {
+    if (lastCamUs && dtCam < (crankRevUs + crankRevUs / 2UL)) {
       /* chatter relative to engine speed */
       return;
     }
@@ -794,10 +794,11 @@ uint32_t T = toothPeriodUs;
     if (teethSinceGap < 60000U)
       teethSinceGap++;
     float degPer = 360.0f / (float)((gTeeth > 0) ? gTeeth : 36);
-    float base = (camSynced && CFG_SEQUENTIAL && cycleHalf) ? 360.0f : 0.0f;
+    uint8_t seqNow = (injSequentialActive() || ignSequentialActive());
+    float base = (camSynced && seqNow && cycleHalf) ? 360.0f : 0.0f;
     crankDeg = base + (float)toothIndex * degPer;
     /* Must wrap fully — single subtract fails when toothIndex >> phys */
-    if (!(injSequentialActive() || ignSequentialActive())) {
+    if (!seqNow) {
       while (crankDeg >= 360.0f) crankDeg -= 360.0f;
       while (crankDeg < 0.0f) crankDeg += 360.0f;
     } else {

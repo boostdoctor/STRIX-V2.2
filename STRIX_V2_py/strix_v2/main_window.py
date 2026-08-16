@@ -34,6 +34,12 @@ from strix_v2.dialogs import (
     TriggerWizardDialog, SetupWizardDialog, MotorsportDialog, TpsCalWizardDialog,
 )
 
+# Firmware injection modes: 1=batch, 2=sequential, 3=sequential below batch RPM
+INJ_MODE_TO_ECU = {"Sequential": 2, "Batch": 1, "Batch above RPM": 3}
+INJ_MODE_FROM_ECU = {0: "Sequential", 1: "Batch", 2: "Sequential", 3: "Batch above RPM"}
+COIL_TYPE_TO_ECU = {"Smart": 0, "Dumb": 1, "Distributor": 2}
+COIL_TYPE_FROM_ECU = {v: k for k, v in COIL_TYPE_TO_ECU.items()}
+
 
 def _settings_path() -> Path:
     return Path.home() / ".strix_v2" / SETTINGS_FILE
@@ -573,7 +579,7 @@ class MainWindow(QMainWindow):
             parts.setdefault("TEETH", str(int(nums[0])))
             parts.setdefault("MISSING", str(int(nums[1])))
             parts.setdefault("ANGLE", str(int(nums[2])))
-        inj_names = {0: "Sequential", 1: "Batch", 2: "Batch above RPM"}
+        inj_names = dict(INJ_MODE_FROM_ECU)
         boost_names = {0: "OFF", 1: "Closed-loop", 2: "Open-loop"}
         summary = []
         def add(label, key, transform=None):
@@ -591,6 +597,10 @@ class MainWindow(QMainWindow):
         add("Trigger angle", "ANGLE")
         add("Cylinders", "CYL")
         add("Inj mode", "INJMODE", lambda v: inj_names.get(int(float(v)), v))
+        add("Ign mode", "IGNMODE", lambda v: "Sequential" if int(float(v)) else "Wasted spark")
+        add("Cam home", "CAMMODE", lambda v: "ON" if int(float(v)) else "OFF")
+        add("Coil", "COILTYPE", lambda v: COIL_TYPE_FROM_ECU.get(int(float(v)), v))
+        add("Batch above", "BATCHRPM")
         add("VE mode", "VEMODE", lambda v: "ON" if int(float(v)) else "OFF")
         add("Req fuel", "REQFUEL")
         add("Flow cc", "FLOW")
@@ -641,7 +651,17 @@ class MainWindow(QMainWindow):
                 self.engine["inj_mode"] = "Batch"
         if "INJMODE" in parts:
             im = int(float(parts["INJMODE"]))
-            self.engine["inj_mode"] = {0: "Sequential", 1: "Batch", 2: "Batch above RPM"}.get(im, "Sequential")
+            self.engine["inj_mode"] = INJ_MODE_FROM_ECU.get(im, "Sequential")
+        if "IGNMODE" in parts:
+            self.engine["ign_sequential"] = bool(int(float(parts["IGNMODE"])))
+        if "CAMMODE" in parts:
+            self.engine["cam_home"] = bool(int(float(parts["CAMMODE"])))
+        if "COILTYPE" in parts:
+            ct = int(float(parts["COILTYPE"]))
+            if ct in COIL_TYPE_FROM_ECU:
+                self.engine["coil_type"] = COIL_TYPE_FROM_ECU[ct]
+        if "BATCHRPM" in parts:
+            self.engine["batch_above_rpm"] = int(float(parts["BATCHRPM"]))
         if "VEMODE" in parts:
             self.engine["ve_mode"] = bool(int(float(parts["VEMODE"])))
             self.btn_ve.blockSignals(True)
@@ -816,7 +836,8 @@ class MainWindow(QMainWindow):
             self.trig_slider.blockSignals(False)
             self.trig_val.setText(f"{int(self.engine.get('trig_angle') or 30)}°")
             self._save_local_settings()
-            if self.connected and rpm == 0:
+            if rpm == 0:
+                # queued while offline, flushed on connect
                 self._push_engine_config()
             if self.connected:
                 self._tx("SET:TRIG,%d\n" % int(self.engine.get("trig_angle") or 30))
@@ -842,14 +863,40 @@ class MainWindow(QMainWindow):
                 ))
                 self.map_ign.vmax = float(self.engine.get("max_advance") or 40)
                 self.map_inj.vmax = float(self.engine.get("max_inj_ms") or 15.0)
+                # Settings only survive a power cycle once written to flash
+                self._start_flash()
 
     def _push_engine_config(self):
+        """Send the full crank/cam/sequential configuration to the ECU.
+
+        Order matters: the wheel profile rewrites teeth/missing/cam mode and
+        CFG clears sync, so both go before the sequential settings.
+        """
+        eng = self.engine
+        cyl = int(eng.get("cylinders") or 4)
+        cam_home = bool(eng.get("cam_home", True))
+        coil = COIL_TYPE_TO_ECU.get(eng.get("coil_type") or "Smart", 0)
+        inj_mode = eng.get("inj_mode") or "Sequential"
+        inj_code = INJ_MODE_TO_ECU.get(inj_mode, INJ_MODE_TO_ECU["Batch"])
+        if not cam_home:
+            inj_code = INJ_MODE_TO_ECU["Batch"]
+        # A distributor has a single output, so spark cannot be sequential
+        ign_seq = 1 if (cam_home and coil != 2) else 0
+
+        if eng.get("wheel_id") is not None:
+            self._tx("SET:WHEEL,%d\n" % int(eng.get("wheel_id") or 0))
         self._tx("CFG:%d,%d,%d\n" % (
-            int(self.engine.get("teeth") or 36),
-            int(self.engine.get("missing") or 1),
-            int(self.engine.get("trig_angle") or 30),
+            int(eng.get("teeth") or 36),
+            int(eng.get("missing") or 1),
+            int(eng.get("trig_angle") or 30),
         ))
-        self._tx("SET:CYL,%d\n" % int(self.engine.get("cylinders") or 4))
+        self._tx("SET:CYL,%d\n" % cyl)
+        self._tx("SET:SENS:CAMMODE,%d\n" % (1 if cam_home else 0))
+        self._tx("SET:COILTYPE,%d\n" % coil)
+        self._tx("SET:IGNMODE,%d\n" % ign_seq)
+        self._tx("SET:INJMODE,%d\n" % inj_code)
+        self._tx("SET:BATCHRPM,%d\n" % int(eng.get("batch_above_rpm") or 3000))
+        self._tx("GETCFG\n")
 
     def _apply_motorsport_tab(self):
         if hasattr(self, "_ms_form"):

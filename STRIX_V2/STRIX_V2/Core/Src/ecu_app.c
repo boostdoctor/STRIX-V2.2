@@ -317,21 +317,22 @@ void ECU_Loop(void) {
   }
   /* Cam hysteresis unlock:
    * - Engine stopped (no crank > 2 s): clear immediately with crank stall path
-   * - Running: require ~3 consecutive missed cam windows before unlock
-   *   Expected cam period ≈ 1-2 crank revolutions
+   * - Running: cam home arrives once per cam rev (2 crank revs), so only
+   *   judge its absence over CAM_HOME_CHECK_REVS crank revolutions. A single
+   *   filtered/noisy edge then can never drop 720° phase; the old code
+   *   incremented the miss counter once per ECU_Loop pass, which unlocked
+   *   sequential almost immediately after one late edge.
    */
   {
     uint32_t nowu = micros();
-    uint32_t expCam = 200000UL;
+    uint32_t crankRevUs = 200000UL;
     if (toothPeriodUs > 0 && gTeeth >= 2) {
-      expCam = toothPeriodUs * (uint32_t)gTeeth; /* ~1 rev */
-      if (expCam < 30000UL) expCam = 30000UL;
-      if (expCam > 500000UL) expCam = 500000UL;
+      crankRevUs = toothPeriodUs * (uint32_t)gTeeth;
+      if (crankRevUs < 15000UL) crankRevUs = 15000UL;
+      if (crankRevUs > 500000UL) crankRevUs = 500000UL;
     }
-    /* High RPM: allow more missed cam windows (ISR load / filter) */
-    uint32_t camMul = (rpmLive > 2000) ? 4UL : 3UL;
-    uint32_t camTimeout = expCam * camMul;
-    if (camTimeout < 40000UL) camTimeout = 40000UL;
+    uint32_t camTimeout = crankRevUs * CAM_HOME_CHECK_REVS;
+    if (camTimeout < 80000UL) camTimeout = 80000UL;
 
     /* Expire edge indicator ~150 ms after last cam edge */
   if (camPulseSeen && lastCamEdgeUs && (micros() - lastCamEdgeUs) > 150000UL)
@@ -340,14 +341,9 @@ void ECU_Loop(void) {
       if (lastCamEdgeUs == 0)
         lastCamEdgeUs = nowu;
       if ((nowu - lastCamEdgeUs) > camTimeout) {
-        if (camUnlockMiss < 255)
-          camUnlockMiss++;
-        uint8_t needMiss = (rpmLive > 2000) ? 6 : 3;
-        if (camUnlockMiss >= needMiss || (nowu - lastCamEdgeUs) > (camTimeout * 4UL)) {
-          camSynced = 0;
-          camLockHits = 0;
-          camUnlockMiss = 0;
-        }
+        camSynced = 0;
+        camLockHits = 0;
+        camUnlockMiss = 0;
       } else {
         camUnlockMiss = 0;
       }
@@ -361,13 +357,9 @@ void ECU_Loop(void) {
       if (lastCam2EdgeUs == 0)
         lastCam2EdgeUs = nowu;
       if ((nowu - lastCam2EdgeUs) > camTimeout) {
-        if (cam2UnlockMiss < 255)
-          cam2UnlockMiss++;
-        if (cam2UnlockMiss >= 3 || (nowu - lastCam2EdgeUs) > (camTimeout * 3UL)) {
-          cam2Synced = 0;
-          cam2LockHits = 0;
-          cam2UnlockMiss = 0;
-        }
+        cam2Synced = 0;
+        cam2LockHits = 0;
+        cam2UnlockMiss = 0;
       } else {
         cam2UnlockMiss = 0;
       }

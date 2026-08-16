@@ -55,7 +55,10 @@ typedef struct __attribute__((packed)) {
   uint8_t  sensTpsEn;
   uint16_t mapLoadRefKpa; /* kPa at load=1.0 */
   uint8_t  ignMode;       /* 0=wasted spark 1=sequential */
-  uint8_t  reserved[15];
+  uint8_t  coilType;      /* 0=smart 1=dumb 2=dist */
+  uint8_t  coilChargeMode;/* 0=const duty 1=const charge time */
+  uint8_t  camModeP1;     /* cam home flag + 1 (0 = never written, keep default) */
+  uint8_t  reserved[12];
 } EcuFlashSettings;
 
 typedef struct __attribute__((packed)) {

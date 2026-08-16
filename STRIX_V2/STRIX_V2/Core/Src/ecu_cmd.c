@@ -137,6 +137,7 @@ void ECU_Settings_Pack(EcuFlashSettings *out)
   out->ignMode = gIgnMode;
   out->coilType = gCoilType;
   out->coilChargeMode = gCoilChargeMode;
+  out->camModeP1 = (uint8_t)(gCamMode ? 2u : 1u);
   out->batchAboveRpm = gBatchAboveRpm;
   out->coilSmart = gCoilSmart;
   out->cylinders = gCyl;
@@ -171,8 +172,9 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
   }
   gInjMode = in->injMode;
   if (in->ignMode <= 1) gIgnMode = in->ignMode;
-  gCoilType = in->coilType;
+  if (in->coilType <= 2) gCoilType = in->coilType;
   if (in->coilChargeMode <= 1) gCoilChargeMode = in->coilChargeMode;
+  if (in->camModeP1) gCamMode = (in->camModeP1 >= 2u) ? 1u : 0u;
   if (in->batchAboveRpm >= 500 && in->batchAboveRpm <= 9000)
     gBatchAboveRpm = in->batchAboveRpm;
   gCoilSmart = in->coilSmart ? 1 : 0;
@@ -203,6 +205,9 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
   sensTpsEn = in->sensTpsEn ? 1 : 0;
   if (in->mapLoadRefKpa >= 50 && in->mapLoadRefKpa <= 250)
     gMapLoadRefKpa = (float)in->mapLoadRefKpa;
+  /* Sequential ign/inj is meaningless without a cam home reference */
+  if ((gIgnMode == 1 || gInjMode == 2 || gInjMode == 3) && gCamMode == 0)
+    gCamMode = 1;
   ECU_Idle_SetEnable(idleEnable);
   ECU_Idle_SetTargetRpm((uint16_t)idleTargetRpm);
 }
@@ -644,7 +649,8 @@ void handleLine(char *line) {
   if (!strncmp(line, "SET:COILTYPE,", 13)) {
     int t = 0;
     if (sscanf(line + 13, "%d", &t) == 1) {
-      if (t < 0) t = 0; if (t > 2) t = 2;
+      if (t < 0) t = 0;
+      if (t > 2) t = 2;
       gCoilType = (uint8_t)t;
       /* Smart → constant duty; Dumb/Dist → constant charge time */
       if (gCoilType == 0) gCoilChargeMode = 0;
@@ -659,7 +665,8 @@ void handleLine(char *line) {
   if (!strncmp(line, "SET:COILMODE,", 13)) {
     int m = 0;
     if (sscanf(line + 13, "%d", &m) == 1) {
-      if (m < 0) m = 0; if (m > 1) m = 1;
+      if (m < 0) m = 0;
+      if (m > 1) m = 1;
       gCoilChargeMode = (uint8_t)m;
       char b[32];
       snprintf(b, sizeof b, "OK:COILMODE,%u\r\n", (unsigned)gCoilChargeMode);
@@ -669,6 +676,31 @@ void handleLine(char *line) {
   }
 
 
+  if (!strncmp(line, "SET:CYL,", 8)) {
+    int n = 0;
+    if (sscanf(line + 8, "%d", &n) == 1) {
+      if (rpmLive > 0 || syncLocked) { uartWrite("ERR:CYL,RPM\r\n"); return; }
+      if (n < 1) n = 1;
+      if (n > MAX_CYL) n = MAX_CYL;
+      gCyl = (uint8_t)n;
+      char b[32];
+      snprintf(b, sizeof b, "OK:CYL,%u\r\n", (unsigned)gCyl);
+      uartWrite(b);
+    } else uartErr("CYL", "PARSE");
+    return;
+  }
+  if (!strncmp(line, "SET:BATCHRPM,", 13)) {
+    int rpm = 0;
+    if (sscanf(line + 13, "%d", &rpm) == 1) {
+      if (rpm < 500) rpm = 500;
+      if (rpm > 9000) rpm = 9000;
+      gBatchAboveRpm = (uint16_t)rpm;
+      char b[32];
+      snprintf(b, sizeof b, "OK:BATCHRPM,%u\r\n", (unsigned)gBatchAboveRpm);
+      uartWrite(b);
+    } else uartErr("BATCHRPM", "PARSE");
+    return;
+  }
   if (!strncmp(line, "SET:IGNMODE,", 12)) {
     int m = 0;
     if (sscanf(line + 12, "%d", &m) == 1) {
@@ -682,7 +714,8 @@ void handleLine(char *line) {
   if (!strncmp(line, "SET:INJMODE,", 12)) {
     int m = 0;
     if (sscanf(line + 12, "%d", &m) == 1) {
-      if (m < 1) m = 1; if (m > 3) m = 3;
+      if (m < 1) m = 1;
+      if (m > 3) m = 3;
       gInjMode = (uint8_t)m;
       if ((gInjMode == 2 || gInjMode == 3) && gCamMode == 0) gCamMode = 1;
       uartWrite("OK:INJMODE\r\n");
@@ -690,14 +723,16 @@ void handleLine(char *line) {
     return;
   }
   if (!strncmp(line, "GETCFG", 6)) {
-    char b[160];
+    char b[200];
     snprintf(b, sizeof b,
-      "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,WHEEL:%u,CAMMODE:%u,FANEN:%u,TACHO:%u,%u,COIL:%u,%u\r\n",
+      "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,WHEEL:%u,CAMMODE:%u,"
+      "FANEN:%u,TACHO:%u,TACHOPPR:%u,COILTYPE:%u,COILMODE:%u,BATCHRPM:%u\r\n",
       (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
       (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
       (unsigned)gWheelId, (unsigned)gCamMode,
       (unsigned)gFanEnable, (unsigned)gTachoEnable, (unsigned)gTachoPpr,
-      (unsigned)gCoilType, (unsigned)gCoilChargeMode);
+      (unsigned)gCoilType, (unsigned)gCoilChargeMode,
+      (unsigned)gBatchAboveRpm);
     uartWrite(b);
     return;
   }
