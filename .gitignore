@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.o
+*.elf
+*.map
+*.list
+Debug/
+Release/
+.settings/
+.metadata/
+*.bak
+.DS_Store
+~$*
