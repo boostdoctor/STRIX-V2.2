@@ -15,6 +15,9 @@
 #define CFG_FAN_ENABLE       0  /* off until IO enables */
 #define CFG_LOAD_ALPHA_N     0
 #define CFG_SEQUENTIAL       0
+/* Cam home is expected once per cam rev (2 crank revs); only declare it lost
+ * after this many crank revolutions without an edge. */
+#define CAM_HOME_CHECK_REVS  4UL
 #define CFG_COIL_SMART       1
 #define CFG_DWELL_NOM_US     3000
 #define CFG_DWELL_MIN_US     1500
