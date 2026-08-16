@@ -40,6 +40,12 @@ INJ_MODE_FROM_ECU = {0: "Sequential", 1: "Batch", 2: "Sequential", 3: "Batch abo
 COIL_TYPE_TO_ECU = {"Smart": 0, "Dumb": 1, "Distributor": 2}
 COIL_TYPE_FROM_ECU = {v: k for k, v in COIL_TYPE_TO_ECU.items()}
 
+# WHEEL_PROFILES ids are a different namespace from the firmware table in
+# ecu_wheels.c, so they must be translated in both directions. Tuner "Custom"
+# and firmware profiles without a tuner equivalent are simply not mapped.
+WHEEL_TO_ECU = {1: 0, 2: 2, 6: 4, 28: 5, 7: 7, 3: 8, 4: 9, 5: 9}
+WHEEL_FROM_ECU = {0: 1, 1: 1, 2: 2, 4: 6, 5: 28, 6: 6, 7: 7, 8: 3, 9: 4, 10: 4}
+
 
 def _settings_path() -> Path:
     return Path.home() / ".strix_v2" / SETTINGS_FILE
@@ -673,7 +679,9 @@ class MainWindow(QMainWindow):
         if "FLOW" in parts:
             self.engine["inj_flow_cc"] = float(parts["FLOW"])
         if "WHEEL" in parts:
-            self.engine["wheel_id"] = int(float(parts["WHEEL"]))
+            w = WHEEL_FROM_ECU.get(int(float(parts["WHEEL"])))
+            if w is not None:
+                self.engine["wheel_id"] = w
         if "BOOST" in parts:
             b = int(float(parts["BOOST"]))
             self.engine["boost_mode"] = {0: "OFF", 1: "Closed-loop", 2: "Open-loop"}.get(b, "OFF")
@@ -863,8 +871,10 @@ class MainWindow(QMainWindow):
                 ))
                 self.map_ign.vmax = float(self.engine.get("max_advance") or 40)
                 self.map_inj.vmax = float(self.engine.get("max_inj_ms") or 15.0)
-                # Settings only survive a power cycle once written to flash
-                self._start_flash()
+                # Settings only survive a power cycle once written to flash,
+                # and flashing halts capture/scheduling, so never while turning
+                if rpm == 0:
+                    self._start_flash()
 
     def _push_engine_config(self):
         """Send the full crank/cam/sequential configuration to the ECU.
@@ -880,11 +890,15 @@ class MainWindow(QMainWindow):
         inj_code = INJ_MODE_TO_ECU.get(inj_mode, INJ_MODE_TO_ECU["Batch"])
         if not cam_home:
             inj_code = INJ_MODE_TO_ECU["Batch"]
-        # A distributor has a single output, so spark cannot be sequential
-        ign_seq = 1 if (cam_home and coil != 2) else 0
+        # Keep whatever the ECU reported; a distributor drives a single output,
+        # so its spark can never be sequential
+        ign_seq = 1 if bool(eng.get("ign_sequential", cam_home)) else 0
+        if coil == 2 or not cam_home:
+            ign_seq = 0
 
-        if eng.get("wheel_id") is not None:
-            self._tx("SET:WHEEL,%d\n" % int(eng.get("wheel_id") or 0))
+        wheel = WHEEL_TO_ECU.get(int(eng.get("wheel_id") or 0))
+        if wheel is not None:
+            self._tx("SET:WHEEL,%d\n" % wheel)
         self._tx("CFG:%d,%d,%d\n" % (
             int(eng.get("teeth") or 36),
             int(eng.get("missing") or 1),
