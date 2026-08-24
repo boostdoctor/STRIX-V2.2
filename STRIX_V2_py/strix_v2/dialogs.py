@@ -4,9 +4,9 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QCheckBox, QSpinBox, QDoubleSpinBox, QGroupBox, QFormLayout, QTabWidget,
+    QCheckBox, QSpinBox, QDoubleSpinBox, QDoubleSpinBox, QGroupBox, QFormLayout, QTabWidget,
     QWidget, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox,
-    QDialogButtonBox, QListWidget, QSlider, QScrollArea,
+    QDialogButtonBox, QListWidget, QSlider, QScrollArea, QHeaderView,
 )
 
 from strix_v2.constants import (
@@ -171,6 +171,20 @@ class SensorCalDialog(QDialog):
         # load values
         o2 = sens.get("o2", {})
         self._fill_o2_table(o2)
+        self.btn_afr_inc = QPushButton("Import AFR .inc (MegaTunix lookup)…")
+        self.btn_afr_inc.setToolTip("Load wideband AFR vs voltage table from .inc file")
+        def _afr_inc():
+            # walk up to MainWindow
+            w = self.parent()
+            while w is not None and not hasattr(w, "import_afr_inc"):
+                w = w.parent() if hasattr(w, "parent") else None
+            if w is not None:
+                w.import_afr_inc()
+            else:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "AFR .inc", "Open from main window context.")
+        self.btn_afr_inc.clicked.connect(_afr_inc)
+        ol.addWidget(self.btn_afr_inc)
         tabs.addTab(wo2, "O2")
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -295,7 +309,7 @@ class EngineSettingsDialog(QDialog):
         self.setMinimumHeight(560)
         self.resize(720, 640)
         self._rpm = rpm
-        locked = rpm > 0
+        locked = False  # core editable while RPM present
         root = QVBoxLayout(self)
         if locked:
             root.addWidget(QLabel("⚠ RPM > 0 — wheel/cyl locked. Trigger angle slider stays live."))
@@ -345,14 +359,126 @@ class EngineSettingsDialog(QDialog):
         for w in (self.wheel, self.cyl, self.teeth, self.missing, self.fire, self.coil):
             w.setEnabled(not locked)
         form.addRow("Crank wheel profile", self.wheel)
+
+        def _on_wheel():
+            data = self.wheel.currentData()
+            # WHEEL_PROFILES teeth/missing from item text not available — use constants
+            from strix_v2.constants import WHEEL_PROFILES
+            for wid, name, teeth, miss in WHEEL_PROFILES:
+                if wid == data:
+                    self.teeth.setValue(teeth)
+                    self.missing.setValue(miss)
+                    break
+        self.wheel.currentIndexChanged.connect(lambda *_: _on_wheel())
         form.addRow("Cylinders", self.cyl)
         form.addRow("Trigger angle (live)", trig_row)
-        self.cam_home = QCheckBox("Cam home present (full sequential)")
+
+        self.eoi = QSlider(Qt.Horizontal)
+        self.eoi.setRange(10, 540)
+        self.eoi.setValue(int(settings.get("eoi_btdc") or 340))
+        self.eoi.setTickPosition(QSlider.TicksBelow)
+        self.eoi.setTickInterval(60)
+        self.eoi_lbl = QLabel(f"{self.eoi.value()} °")
+        self.eoi_lbl.setMinimumWidth(48)
+        self.eoi.setToolTip(
+            "End of injection, degrees before compression TDC. "
+            "Port sequential: 300–420 (360 = intake BDC). "
+            "60° is next to spark — too late for port injectors."
+        )
+        self.eoi.valueChanged.connect(self._live_eoi)
+        eoi_row = QHBoxLayout()
+        eoi_row.addWidget(self.eoi, 1)
+        eoi_row.addWidget(self.eoi_lbl)
+        form.addRow("EOI angle (live)", eoi_row)
+
+        self.cam_home = QCheckBox("Cam home present (required for Sequential)")
         self.cam_home.setChecked(bool(settings.get("cam_home", True)))
         self.cam_home.setEnabled(not locked)
+        self.cam_home.setStyleSheet(
+            "QCheckBox { color: #1a1e26; background-color: #f0d060; padding: 6px 10px;"
+            " border: 2px solid #e0a800; border-radius: 4px; font-weight: 700; }"
+            "QCheckBox::indicator { width: 16px; height: 16px; }"
+        )
         form.addRow(self.cam_home)
         form.addRow("Firing order", self.fire)
         form.addRow("Ignition coil", self.coil)
+        self.coil_charge = QComboBox()
+        self.coil_charge.addItems(["Constant Duty", "Constant Charge"])
+        ccm = settings.get("coil_charge_mode") or "Constant Duty"
+        if (settings.get("coil_type") or "Smart") == "Smart":
+            ccm = settings.get("coil_charge_mode") or "Constant Duty"
+        else:
+            ccm = settings.get("coil_charge_mode") or "Constant Charge"
+        if ccm not in ("Constant Duty", "Constant Charge"):
+            ccm = "Constant Duty"
+        self.coil_charge.setCurrentText(ccm)
+        self.coil_charge.setToolTip(
+            "Constant Duty (smart default): <300 RPM 60%, >500 RPM max 40%. "
+            "Constant Charge: fixed dwell time, max 8 ms.")
+        form.addRow("Coil charge", self.coil_charge)
+
+        def _on_coil_type():
+            if self.coil.currentText() == "Smart":
+                self.coil_charge.setCurrentText("Constant Duty")
+            else:
+                self.coil_charge.setCurrentText("Constant Charge")
+        self.coil.currentTextChanged.connect(lambda *_: _on_coil_type())
+
+        self.ign_mode = QComboBox()
+        self.ign_mode.addItems(["Wasted Spark", "Sequential"])
+        im = settings.get("ign_mode") or "Wasted Spark"
+        if str(im).startswith("Seq"):
+            im = "Sequential"
+        else:
+            im = "Wasted Spark"
+        self.ign_mode.setCurrentText(im)
+        self.ign_mode.setEnabled(not locked)
+        self.ign_mode.setToolTip("Sequential ignition needs Cam home. Otherwise wasted spark (360°).")
+        form.addRow("Ignition mode", self.ign_mode)
+
+        self.inj_mode_cb = QComboBox()
+        self.inj_mode_cb.addItems(["Batch", "Sequential"])
+        jm = settings.get("inj_mode") or "Batch"
+        if str(jm).startswith("Seq"):
+            jm = "Sequential"
+        else:
+            jm = "Batch"
+        if int(settings.get("cylinders") or 4) in (5, 6, 8):
+            jm = "Batch"
+        self.inj_mode_cb.setCurrentText(jm)
+        self.inj_mode_cb.setEnabled(not locked)
+        self.inj_mode_cb.setToolTip("Batch = split-bank 360°. Sequential = one injector / 720° (needs Cam home).")
+        form.addRow("Injection mode", self.inj_mode_cb)
+
+        def _sync_seq_enable():
+            seq_ok = bool(self.cam_home.isChecked())
+            high_cyl = False
+            try:
+                high_cyl = int(self.cyl.value()) in (5, 6, 8)
+            except Exception:
+                pass
+            try:
+                ign_item = self.ign_mode.model().item(1)
+                if ign_item is not None:
+                    ign_item.setEnabled(seq_ok)
+                inj_item = self.inj_mode_cb.model().item(1)
+                if inj_item is not None:
+                    inj_item.setEnabled(seq_ok and not high_cyl)
+            except Exception:
+                pass
+            if not seq_ok and self.ign_mode.currentText() == "Sequential":
+                self.ign_mode.blockSignals(True)
+                self.ign_mode.setCurrentText("Wasted Spark")
+                self.ign_mode.blockSignals(False)
+            if (not seq_ok or high_cyl) and self.inj_mode_cb.currentText() == "Sequential":
+                self.inj_mode_cb.blockSignals(True)
+                self.inj_mode_cb.setCurrentText("Batch")
+                self.inj_mode_cb.blockSignals(False)
+        self.cam_home.toggled.connect(lambda _=None: _sync_seq_enable())
+        self.cyl.valueChanged.connect(lambda _=None: _sync_seq_enable())
+        _sync_seq_enable()
+
+
         # RPM limiter moved from Controls → Core
         self.rpm_lim = _spin(2000, 12000, settings.get("rpm_limit") or 7000, " RPM")
         self.rpm_cut = QComboBox(); self.rpm_cut.addItems(["Hard", "Soft"])
@@ -366,7 +492,7 @@ class EngineSettingsDialog(QDialog):
         self.max_ret.setToolTip("Maximum retard past TDC (ATDC). Final timing ≥ −max_retard")
         form.addRow("Max advance", self.max_adv)
         form.addRow("Max retard", self.max_ret)
-        tabs.addTab(core, "Core")
+        tabs.addTab(core, "Ignition")
 
         # ── Fuel ──────────────────────────────────────────
         fuel_inner = QWidget()
@@ -387,23 +513,7 @@ class EngineSettingsDialog(QDialog):
         load_form.addRow("MAP scale max", self.map_kpa_max)
         fl.addWidget(load_grp)
 
-        prime_grp = QGroupBox("Priming (V2)"); prime_form = QFormLayout(prime_grp)
-        prime_form.setHorizontalSpacing(16)
-        prime_form.setVerticalSpacing(10)
-        prime_form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        self.fp_prime = _spin(0, 15000, settings.get("fp_prime_ms") or 2000, " ms")
-        self.fp_prime.setSingleStep(100)
-        self.fp_prime.setToolTip("Fuel pump on after power-up / when applied")
-        self.inj_prime_en = QCheckBox("Enable start injector prime pulse")
-        self.inj_prime_en.setChecked(bool(settings.get("start_prime_enable", True)))
-        self.inj_prime = _spin(0, 500, settings.get("start_prime_ms") or 50, " ms")
-        self.inj_prime.setSingleStep(5)
-        self.inj_prime.setEnabled(self.inj_prime_en.isChecked())
-        self.inj_prime_en.toggled.connect(self.inj_prime.setEnabled)
-        prime_form.addRow("Fuel pump prime", self.fp_prime)
-        prime_form.addRow(self.inj_prime_en)
-        prime_form.addRow("Start inj. prime", self.inj_prime)
-        fl.addWidget(prime_grp)
+        # Priming moved to Startup tab
 
         inj_grp = QGroupBox("Injection"); inj_form = QFormLayout(inj_grp)
         inj_form.setLabelAlignment(Qt.AlignRight)
@@ -411,6 +521,19 @@ class EngineSettingsDialog(QDialog):
         inj_form.setHorizontalSpacing(16)
         inj_form.setVerticalSpacing(10)
         inj_form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        # Fuel map mode: VE % vs raw injector duty (ms)
+        self.fuel_mode = QComboBox()
+        self.fuel_mode.addItems(["VE", "Injector Duty"])
+        self.fuel_mode.setToolTip(
+            "VE: map cells are volumetric efficiency % (scaled by req fuel / flow / density).\n"
+            "Injector Duty: map cells are injector pulse width in ms directly."
+        )
+        if bool(settings.get("ve_mode", True)):
+            self.fuel_mode.setCurrentText("VE")
+        else:
+            self.fuel_mode.setCurrentText("Injector Duty")
+        inj_form.addRow("Fuel map mode", self.fuel_mode)
+
         self.inj_flow = QDoubleSpinBox()
         self.inj_flow.setMinimumWidth(140)
         self.inj_flow.setRange(50.0, 3000.0)
@@ -427,8 +550,10 @@ class EngineSettingsDialog(QDialog):
         self.req_fuel.setSuffix(" ms")
         self.req_fuel.setValue(float(settings.get("req_fuel_ms") or 2.5))
         self.req_fuel.setToolTip("Base pulse at 100% VE, 100 kPa absolute, 20 °C")
+        # Keep ve_mode_cb as hidden compatibility mirror of fuel_mode
         self.ve_mode_cb = QCheckBox("Fuel map is VE % (not raw ms)")
         self.ve_mode_cb.setChecked(bool(settings.get("ve_mode", True)))
+        self.ve_mode_cb.hide()
         inj_form.addRow("Injector flow", self.inj_flow)
         self.fuel_press = QDoubleSpinBox()
         self.fuel_press.setMinimumWidth(140)
@@ -449,7 +574,6 @@ class EngineSettingsDialog(QDialog):
         inj_form.addRow("Fuel pressure (rail)", self.fuel_press)
         inj_form.addRow("Flow rated at", self.fuel_press_rated)
         inj_form.addRow("Req fuel (100% VE)", self.req_fuel)
-        inj_form.addRow(self.ve_mode_cb)
         self.max_inj = QDoubleSpinBox()
         self.max_inj.setMinimumWidth(140)
         self.max_inj.setRange(1.0, 30.0)
@@ -459,42 +583,18 @@ class EngineSettingsDialog(QDialog):
         self.max_inj.setValue(float(settings.get("max_inj_ms") or 15.0))
         self.max_inj.setToolTip("Hard maximum injector pulse width (after enrichments)")
         inj_form.addRow("Max injection", self.max_inj)
-        self.inj_mode = QComboBox(); self.inj_mode.addItems(["Sequential", "Batch", "Batch above RPM"])
-        im = settings.get("inj_mode") or "Sequential"
-        if im in ("Sequential", "Batch", "Batch above RPM"):
-            self.inj_mode.setCurrentText(im)
-        self.batch_rpm = _spin(1000, 8000, settings.get("batch_above_rpm") or 3000, " RPM")
-        self.batch_rpm.setEnabled(self.inj_mode.currentText() == "Batch above RPM")
-        def _cyl_mode_sync(*_):
-            c = self.cyl.value()
-            mode = self.inj_mode.currentText()
-            if c in (5, 6, 8) and mode == "Sequential":
-                self.inj_mode.blockSignals(True)
-                self.inj_mode.setCurrentText("Batch")
-                self.inj_mode.blockSignals(False)
-                self.batch_rpm.setEnabled(False)
-            elif mode == "Sequential" and c > 4:
-                self.cyl.blockSignals(True)
-                self.cyl.setValue(4)
-                self.cyl.blockSignals(False)
-            self.batch_rpm.setEnabled(self.inj_mode.currentText() == "Batch above RPM")
-        self.inj_mode.currentTextChanged.connect(_cyl_mode_sync)
-        self.cyl.valueChanged.connect(_cyl_mode_sync)
-        self.cyl.valueChanged.connect(lambda v: self._refill_fire_orders(int(v)))
-        _cyl_mode_sync()
-        def _cyl_changed(n):
-            if int(n) in (5, 6, 8):
-                self.inj_mode.setCurrentText("Batch")
-                self.inj_mode.setEnabled(False)
-                self.batch_rpm.setEnabled(False)
-            else:
-                self.inj_mode.setEnabled(True)
-                self.batch_rpm.setEnabled(self.inj_mode.currentText() == "Batch above RPM")
-        self.cyl.valueChanged.connect(_cyl_changed)
-        _cyl_changed(self.cyl.value())
-        inj_form.addRow("Injection mode", self.inj_mode)
-        inj_form.addRow("Batch above", self.batch_rpm)
+
+        def _fuel_mode_fields(mode: str):
+            ve_on = (mode == "VE")
+            self.ve_mode_cb.setChecked(ve_on)
+            # Injector Duty: grey all injection settings except Max Injection
+            for w in (self.inj_flow, self.fuel_press, self.fuel_press_rated, self.req_fuel):
+                w.setEnabled(ve_on)
+        self.fuel_mode.currentTextChanged.connect(_fuel_mode_fields)
+        _fuel_mode_fields(self.fuel_mode.currentText())
+
         fl.addWidget(inj_grp)
+        self._fuel_fl = fl
         fl.addStretch(1)
         fuel = QScrollArea()
         fuel.setWidgetResizable(True)
@@ -502,8 +602,14 @@ class EngineSettingsDialog(QDialog):
         fuel.setWidget(fuel_inner)
         tabs.addTab(fuel, "Fuel")
 
-        # ── Throttle / Idle ───────────────────────────────
-        thr = QWidget(); tf = QFormLayout(thr)
+        # ── Throttle / Idle / AE (scrollable, all controls visible) ──
+        thr_inner = QWidget()
+        thr_lay = QVBoxLayout(thr_inner)
+        thr_lay.setSpacing(10)
+        thr_lay.setContentsMargins(8, 8, 8, 8)
+
+        thr_grp = QGroupBox("Throttle")
+        tf = QFormLayout(thr_grp)
         self.thr_type = QComboBox(); self.thr_type.addItems(["Cable", "DBW"])
         tt0 = settings.get("throttle_type") or "Cable"
         self.thr_type.setCurrentText(tt0 if tt0 in ("Cable", "DBW") else "Cable")
@@ -519,11 +625,11 @@ class EngineSettingsDialog(QDialog):
         self.thr_type.currentTextChanged.connect(_thr_changed)
         self.idle.setEnabled(self.thr_type.currentText() == "Cable")
         tf.addRow("Throttle type", self.thr_type)
-        tf.addRow("Idle control", self.idle)
+        tf.addRow("Idle actuator", self.idle)
         self.btn_pedal_wiz = QPushButton("Pedal position calibration wizard")
         self.btn_tps_wiz = QPushButton("Throttle position calibration wizard")
         self.btn_pedal_wiz.setEnabled(self.thr_type.currentText() == "DBW")
-        self.btn_tps_wiz.setEnabled(True)  # cable + DBW
+        self.btn_tps_wiz.setEnabled(True)
         def _dbw_wiz(s):
             self.btn_pedal_wiz.setEnabled(s == "DBW")
             self.btn_tps_wiz.setEnabled(True)
@@ -532,10 +638,84 @@ class EngineSettingsDialog(QDialog):
             self, "Pedal wizard",
             "1. Key on, engine off\n2. Foot off pedal → Store CLOSED\n3. Full pedal → Store OPEN + Save\n(SET:PEDAL handled by ECU when connected)"))
         self.btn_tps_wiz.clicked.connect(self._open_tps_wizard)
-        tf.addRow(self.btn_pedal_wiz)
         tf.addRow(self.btn_tps_wiz)
-        tf.addRow(QLabel("Cable: TPS wizard required.  DBW: run pedal + throttle wizards."))
-        tabs.addTab(thr, "Throttle")
+        tf.addRow(self.btn_pedal_wiz)
+        tf.addRow(QLabel("Cable: run TPS wizard.  DBW: run pedal + TPS wizards."))
+        thr_lay.addWidget(thr_grp)
+
+        idle_grp = QGroupBox("Closed-loop idle")
+        idle_form = QFormLayout(idle_grp)
+        self.idle_cl_en = QCheckBox("Enable closed-loop idle (target RPM vs ECT)")
+        self.idle_cl_en.setChecked(bool(settings.get("idle_enable", True)))
+        self.idle_cl_en.setToolTip("ETB/PWM idle valve tracks target RPM that varies with coolant temp")
+        idle_form.addRow(self.idle_cl_en)
+        self.idle_tgt_lbl = QLabel("Idle target map (interpolated vs ECT)")
+        idle_form.addRow(self.idle_tgt_lbl)
+        self.idle_rpm_table = QTableWidget(5, 2)
+        self.idle_rpm_table.setHorizontalHeaderLabels(["ECT °C", "Target RPM"])
+        self.idle_rpm_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.idle_rpm_table.setMinimumHeight(150)
+        self.idle_rpm_table.setMaximumHeight(180)
+        _ect = settings.get("idle_ect_bins") or [-10, 20, 40, 60, 90]
+        _rpm = settings.get("idle_target_rpm_tbl") or [1400, 1100, 950, 850, 850]
+        for i in range(5):
+            self.idle_rpm_table.setItem(i, 0, QTableWidgetItem(str(_ect[i] if i < len(_ect) else 0)))
+            self.idle_rpm_table.setItem(i, 1, QTableWidgetItem(str(_rpm[i] if i < len(_rpm) else 850)))
+        idle_form.addRow(self.idle_rpm_table)
+        def _idle_cl_fields(on: bool):
+            self.idle_rpm_table.setEnabled(bool(on))
+            self.idle_tgt_lbl.setEnabled(bool(on))
+        self.idle_cl_en.toggled.connect(_idle_cl_fields)
+        _idle_cl_fields(self.idle_cl_en.isChecked())
+        thr_lay.addWidget(idle_grp)
+
+        ae_grp = QGroupBox("Acceleration enrichment (tip-in)")
+        ae_form = QFormLayout(ae_grp)
+        self.ae_en = QCheckBox("Enable variable acceleration enrichment")
+        self.ae_en.setChecked(bool(settings.get("ae_enable", True)))
+        self.ae_en.setToolTip("Adds temporary fuel on sudden throttle opening (TPS rate)")
+        self.ae_thresh = QDoubleSpinBox()
+        self.ae_thresh.setRange(1.0, 200.0)
+        self.ae_thresh.setDecimals(0)
+        self.ae_thresh.setSuffix(" %/s")
+        self.ae_thresh.setValue(float(settings.get("ae_tps_dot_thresh") or 20.0))
+        self.ae_thresh.setToolTip("Minimum TPS rate (% per second) to trigger AE")
+        self.ae_gain = QDoubleSpinBox()
+        self.ae_gain.setRange(0.1, 10.0)
+        self.ae_gain.setDecimals(1)
+        self.ae_gain.setSingleStep(0.1)
+        self.ae_gain.setSuffix(" % / %/s")
+        self.ae_gain.setValue(float(settings.get("ae_gain") or 1.5))
+        self.ae_gain.setToolTip("Extra fuel % per %/s above threshold")
+        self.ae_max = QDoubleSpinBox()
+        self.ae_max.setRange(0.0, 100.0)
+        self.ae_max.setDecimals(0)
+        self.ae_max.setSuffix(" %")
+        self.ae_max.setValue(float(settings.get("ae_max_pct") or 40.0))
+        self.ae_max.setToolTip("Hard ceiling on AE enrichment %")
+        self.ae_decay = QSpinBox()
+        self.ae_decay.setRange(50, 2000)
+        self.ae_decay.setSuffix(" ms")
+        self.ae_decay.setValue(int(settings.get("ae_decay_ms") or 400))
+        self.ae_decay.setToolTip("Time for AE enrichment to decay to zero after tip-in")
+        ae_form.addRow(self.ae_en)
+        ae_form.addRow("TPS rate threshold", self.ae_thresh)
+        ae_form.addRow("Gain", self.ae_gain)
+        ae_form.addRow("Max enrichment", self.ae_max)
+        ae_form.addRow("Decay time", self.ae_decay)
+        def _ae_fields(on: bool):
+            for w in (self.ae_thresh, self.ae_gain, self.ae_max, self.ae_decay):
+                w.setEnabled(bool(on))
+        self.ae_en.toggled.connect(_ae_fields)
+        _ae_fields(self.ae_en.isChecked())
+        thr_lay.addWidget(ae_grp)
+        thr_lay.addStretch(1)
+
+        thr_scroll = QScrollArea()
+        thr_scroll.setWidgetResizable(True)
+        thr_scroll.setFrameShape(QScrollArea.NoFrame)
+        thr_scroll.setWidget(thr_inner)
+        tabs.addTab(thr_scroll, "Throttle")
 
         # ── Sensors / I/O ─────────────────────────────────
         io = QWidget(); iof = QFormLayout(io)
@@ -562,7 +742,7 @@ class EngineSettingsDialog(QDialog):
             vm = "Disabled"
         self.vvt_mode.setCurrentText(vm)
         self.fan_en = QCheckBox("Radiator fan control")
-        self.fan_en.setChecked(bool(settings.get("fan_enable", True)))
+        self.fan_en.setChecked(bool(settings.get("fan_enable", False)))
         self.fan = _spin(60, 130, settings.get("fan_c") or 95, " °C")
         self.fan.setEnabled(self.fan_en.isChecked())
         self.fan_en.toggled.connect(self.fan.setEnabled)
@@ -597,7 +777,18 @@ class EngineSettingsDialog(QDialog):
         iof.addRow(self.cam1_vvt)
         iof.addRow(self.cam2_vvt)
         iof.addRow(self.fan_en)
+        
         iof.addRow("Fan on temperature", self.fan)
+        self.tacho_en = QCheckBox("Tachometer output (PC14 spare)")
+        self.tacho_en.setChecked(bool(settings.get("tacho_enable", False)))
+        self.tacho_ppr = QComboBox()
+        self.tacho_ppr.addItems(["1", "2", "3", "4", "6", "8", "12"])
+        self.tacho_ppr.setCurrentText(str(settings.get("tacho_ppr") or 2))
+        self.tacho_ppr.setEnabled(self.tacho_en.isChecked())
+        self.tacho_en.toggled.connect(self.tacho_ppr.setEnabled)
+        iof.addRow(self.tacho_en)
+        iof.addRow("Tacho pulses / rev", self.tacho_ppr)
+
         tabs.addTab(io, "I/O")
 
         
@@ -653,7 +844,12 @@ class EngineSettingsDialog(QDialog):
         note.setWordWrap(True)
         note.setStyleSheet("color:#8899aa;font-size:11px;")
         cutf.addRow(note)
-        tabs.addTab(cut, "Fuel cut")
+        # DFCO folded into Fuel tab (above stretch)
+        if hasattr(self, "_fuel_fl"):
+            idx = max(0, self._fuel_fl.count() - 1)
+            self._fuel_fl.insertWidget(idx, cut)
+        else:
+            tabs.addTab(cut, "Fuel cut")
 
         # ── Tools (was Controls) ──────────────────────────
         tools = QWidget(); tl = QVBoxLayout(tools)
@@ -686,6 +882,32 @@ class EngineSettingsDialog(QDialog):
         self.btn_setup_wiz.clicked.connect(_open_setup)
         self.btn_setup_wiz.setEnabled(not locked)
         tl.addWidget(self.btn_setup_wiz)
+        self.btn_warmup = QPushButton("Warm-up wizard")
+        self.btn_warmup.setToolTip("WUE / ASE enrichment wizard")
+        def _open_warmup():
+            w = self.parent()
+            while w is not None and not hasattr(w, "open_warmup"):
+                w = w.parent() if hasattr(w, "parent") else None
+            if w is not None:
+                w.open_warmup()
+        self.btn_warmup.clicked.connect(_open_warmup)
+        tl.addWidget(self.btn_warmup)
+        self.btn_reset_defaults = QPushButton("Reset ECU to defaults…")
+        self.btn_reset_defaults.setToolTip(
+            "Factory-reset local settings & maps; if connected, write defaults to ECU RAM")
+        self.btn_reset_defaults.setStyleSheet("color:#ffcc66;font-weight:700;")
+        def _reset_defaults():
+            w = self.parent()
+            while w is not None and not hasattr(w, "reset_ecu_defaults"):
+                w = w.parent() if hasattr(w, "parent") else None
+            if w is not None:
+                # Close settings dialog first so main window can show confirm
+                self.reject()
+                w.reset_ecu_defaults()
+            else:
+                QMessageBox.information(self, "Reset", "Open from main window.")
+        self.btn_reset_defaults.clicked.connect(_reset_defaults)
+        tl.addWidget(self.btn_reset_defaults)
         tl.addStretch(1)
         tabs.addTab(tools, "Tools")
 
@@ -725,6 +947,8 @@ class EngineSettingsDialog(QDialog):
                 self.teeth.setValue(int(data.get("teeth") or 36))
                 self.missing.setValue(int(data.get("missing") or 1))
                 self.trig.setValue(int(data.get("trig_angle") or 30))
+                if hasattr(self, "eoi"):
+                    self.eoi.setValue(int(data.get("eoi_btdc") or 340))
                 wi = int(data.get("wheel_id") or 0)
                 i = self.wheel.findData(wi)
                 if i >= 0:
@@ -741,13 +965,28 @@ class EngineSettingsDialog(QDialog):
                 if lm in ("MAP", "TPS", "HYBRID"):
                     self.load_mode.setCurrentText(lm)
                 self.map_kpa_max.setValue(int(data.get("map_kpa_max") or 240))
-                self.fp_prime.setValue(int(data.get("fp_prime_ms") or 2000))
-                self.inj_prime.setValue(int(data.get("start_prime_ms") or 50))
-                self.inj_prime_en.setChecked(bool(data.get("start_prime_enable", True)))
-                im = data.get("inj_mode") or "Sequential"
-                if im in ("Sequential", "Batch", "Batch above RPM"):
-                    self.inj_mode.setCurrentText(im)
-                self.batch_rpm.setValue(int(data.get("batch_above_rpm") or 3000))
+                if hasattr(self, "fp_prime"):
+                    self.fp_prime.setValue(int(data.get("fp_prime_ms") or 2000))
+                if hasattr(self, "inj_prime"):
+                    self.inj_prime.setValue(int(data.get("start_prime_ms") or 50))
+                if hasattr(self, "inj_prime_en"):
+                    self.inj_prime_en.setChecked(bool(data.get("start_prime_enable", True)))
+                ign = data.get("ign_mode") or "Wasted Spark"
+                inj = data.get("inj_mode") or data.get("run_mode") or "Batch"
+                if str(ign).startswith("Seq") or str(data.get("run_mode")) == "Sequential":
+                    ign = "Sequential"
+                else:
+                    ign = "Wasted Spark"
+                if str(inj).startswith("Seq"):
+                    inj = "Sequential"
+                else:
+                    inj = "Batch"
+                if hasattr(self, "ign_mode"):
+                    self.ign_mode.setCurrentText(ign)
+                if hasattr(self, "inj_mode_cb"):
+                    self.inj_mode_cb.setCurrentText(inj)
+                if hasattr(self, "cam_home"):
+                    self.cam_home.setChecked(bool(data.get("cam_home", True)))
                 tt0 = data.get("throttle_type") or "Cable"
                 if tt0 in ("Cable", "DBW"):
                     self.thr_type.setCurrentText(tt0)
@@ -766,7 +1005,7 @@ class EngineSettingsDialog(QDialog):
                 vm = data.get("vvt_mode") or "Disabled"
                 if vm in ("Disabled", "Intake", "Exhaust", "Intake & Exhaust"):
                     self.vvt_mode.setCurrentText(vm)
-                self.fan_en.setChecked(bool(data.get("fan_enable", True)))
+                self.fan_en.setChecked(bool(data.get("fan_enable", False)))
                 self.fan.setValue(int(data.get("fan_c") or 95))
                 self.rpm_lim.setValue(int(data.get("rpm_limit") or 7000))
                 rc = data.get("rpm_cut_mode") or "Hard"
@@ -783,6 +1022,16 @@ class EngineSettingsDialog(QDialog):
         live_g = (lambda: getattr(p, "live", {})) if p else (lambda: {})
         send = getattr(p, "_tx", None) if p else None
         TpsCalWizardDialog(live_g, send_fn=send, parent=self).exec()
+
+    def _live_eoi(self, v: int):
+        self.eoi_lbl.setText(f"{v} °")
+        p = self.parent()
+        while p is not None and not hasattr(p, "_tx"):
+            p = p.parent()
+        if p is not None and hasattr(p, "engine"):
+            p.engine["eoi_btdc"] = int(v)
+        if p is not None and getattr(p, "connected", False):
+            p._tx("SET:EOI,%d\n" % int(v))
 
     def _live_trig(self, v: int):
         self.trig_lbl.setText(f"{v} °")
@@ -814,9 +1063,12 @@ class EngineSettingsDialog(QDialog):
 
 
     def apply_to(self, settings: dict) -> None:
-        settings["fp_prime_ms"] = self.fp_prime.value()
-        settings["start_prime_ms"] = self.inj_prime.value()
-        settings["start_prime_enable"] = self.inj_prime_en.isChecked()
+        if hasattr(self, "fp_prime"):
+            settings["fp_prime_ms"] = self.fp_prime.value()
+        if hasattr(self, "inj_prime"):
+            settings["start_prime_ms"] = self.inj_prime.value()
+        if hasattr(self, "inj_prime_en"):
+            settings["start_prime_enable"] = self.inj_prime_en.isChecked()
         settings["rpm_limit"] = self.rpm_lim.value()
         settings["rpm_cut_mode"] = self.rpm_cut.currentText()
         if hasattr(self, "max_adv"):
@@ -824,22 +1076,42 @@ class EngineSettingsDialog(QDialog):
             settings["max_retard"] = int(self.max_ret.value())
         settings["fan_enable"] = self.fan_en.isChecked()
         settings["fan_c"] = self.fan.value()
+        settings["tacho_enable"] = self.tacho_en.isChecked()
+        settings["tacho_ppr"] = int(self.tacho_ppr.currentText())
         settings["map_kpa_max"] = self.map_kpa_max.value()
         cyl_n = int(self.cyl.value())
+        ign = self.ign_mode.currentText() if hasattr(self, "ign_mode") else "Wasted Spark"
+        inj = self.inj_mode_cb.currentText() if hasattr(self, "inj_mode_cb") else "Batch"
         if cyl_n in (5, 6, 8):
-            settings["inj_mode"] = "Batch"
-        else:
-            settings["inj_mode"] = self.inj_mode.currentText()
-        settings["batch_above_rpm"] = self.batch_rpm.value()
+            inj = "Batch"
+        if not self.cam_home.isChecked():
+            ign = "Wasted Spark"
+            inj = "Batch"
+        settings["ign_mode"] = ign
+        settings["inj_mode"] = inj
+        settings["run_mode"] = "Sequential" if (ign == "Sequential" and inj == "Sequential") else "Batch"
+        settings["cam_home"] = self.cam_home.isChecked()
+        settings["batch_above_rpm"] = int(settings.get("batch_above_rpm") or 3000)
+        if hasattr(self, "fuel_mode"):
+            settings["ve_mode"] = (self.fuel_mode.currentText() == "VE")
+            if hasattr(self, "ve_mode_cb"):
+                self.ve_mode_cb.setChecked(settings["ve_mode"])
+        elif hasattr(self, "ve_mode_cb"):
+            settings["ve_mode"] = bool(self.ve_mode_cb.isChecked())
         if hasattr(self, "inj_flow"):
             settings["inj_flow_cc"] = float(self.inj_flow.value())
             settings["req_fuel_ms"] = float(self.req_fuel.value())
-            settings["ve_mode"] = bool(self.ve_mode_cb.isChecked())
             if hasattr(self, "max_inj"):
                 settings["max_inj_ms"] = float(self.max_inj.value())
             if hasattr(self, "fuel_press"):
                 settings["fuel_pressure_bar"] = float(self.fuel_press.value())
                 settings["fuel_pressure_rated_bar"] = float(self.fuel_press_rated.value())
+        if hasattr(self, "ae_en"):
+            settings["ae_enable"] = bool(self.ae_en.isChecked())
+            settings["ae_tps_dot_thresh"] = float(self.ae_thresh.value())
+            settings["ae_gain"] = float(self.ae_gain.value())
+            settings["ae_max_pct"] = float(self.ae_max.value())
+            settings["ae_decay_ms"] = int(self.ae_decay.value())
         settings["load_mode"] = self.load_mode.currentText()
         settings["throttle_type"] = self.thr_type.currentText()
         settings["idle_control"] = self.idle.currentText()
@@ -853,7 +1125,24 @@ class EngineSettingsDialog(QDialog):
         settings["cam1_vvt_cl"] = bool(getattr(self, "cam1_vvt", None) and self.cam1_vvt.isChecked())
         settings["cam2_vvt_cl"] = bool(getattr(self, "cam2_vvt", None) and self.cam2_vvt.isChecked())
         settings["coil_type"] = self.coil.currentText()
+        if hasattr(self, "coil_charge"):
+            settings["coil_charge_mode"] = self.coil_charge.currentText()
         settings["firing_order"] = self.fire.currentText()
+        if hasattr(self, "idle_cl_en"):
+            settings["idle_enable"] = bool(self.idle_cl_en.isChecked())
+        if hasattr(self, "idle_rpm_table"):
+            ect_b, rpm_b = [], []
+            for i in range(self.idle_rpm_table.rowCount()):
+                def _c(r, c, d=0.0):
+                    it = self.idle_rpm_table.item(r, c)
+                    try:
+                        return float(it.text()) if it else d
+                    except Exception:
+                        return d
+                ect_b.append(_c(i, 0))
+                rpm_b.append(_c(i, 1, 850.0))
+            settings["idle_ect_bins"] = ect_b
+            settings["idle_target_rpm_tbl"] = rpm_b
         if hasattr(self, "dfco_en"):
             settings["dfco_enable"] = bool(self.dfco_en.isChecked())
             settings["dfco_enter_rpm"] = int(self.dfco_enter.value())
@@ -861,7 +1150,18 @@ class EngineSettingsDialog(QDialog):
             settings["dfco_max_tps"] = float(self.dfco_tps.value())
             settings["dfco_min_ect"] = float(self.dfco_ect.value())
             settings["dfco_delay_ms"] = int(self.dfco_delay.value())
-        settings["wheel_id"] = int(self.wheel.currentData())
+        settings["wheel_id"] = int(self.wheel.currentData() if self.wheel.currentData() is not None else 9)
+        wid = int(settings["wheel_id"])
+        for w_id, _n, teeth, missing in WHEEL_PROFILES:
+            if w_id == wid:
+                settings["teeth"] = teeth
+                settings["missing"] = missing
+                settings["cam_home"] = bool(settings.get("cam_home")) or ("cam" in _n.lower())
+                break
+        else:
+            if hasattr(self, "teeth"):
+                settings["teeth"] = int(self.teeth.value())
+                settings["missing"] = int(self.missing.value())
         sens = settings.setdefault("sensors", {})
         sens.setdefault("ect", {})["enabled"] = self.ect_en.isChecked()
         sens.setdefault("iat", {})["enabled"] = self.iat_en.isChecked()
@@ -874,21 +1174,14 @@ class EngineSettingsDialog(QDialog):
         elif settings["load_mode"] == "TPS":
             from strix_v2.constants import make_tps_bins
             settings["tps_bins"] = make_tps_bins()
+        if hasattr(self, "eoi"):
+            settings["eoi_btdc"] = int(self.eoi.value())
+        settings["trig_angle"] = int(self.trig.value())
         if self._rpm > 0:
             return
         settings["cylinders"] = self.cyl.value()
         if settings["cylinders"] in (5, 6, 8):
             settings["inj_mode"] = "Batch" if settings.get("inj_mode") == "Sequential" else settings.get("inj_mode") or "Batch"
-        wid = int(self.wheel.currentData())
-        for w_id, _n, teeth, missing in WHEEL_PROFILES:
-            if w_id == wid:
-                settings["teeth"] = teeth
-                settings["missing"] = missing
-                break
-        else:
-            settings["teeth"] = int(getattr(self, "teeth", None).value() if hasattr(self, "teeth") else 36)
-            settings["missing"] = int(getattr(self, "missing", None).value() if hasattr(self, "missing") else 1)
-        settings["trig_angle"] = int(self.trig.value())  # slider or spin
 
 
 
@@ -980,7 +1273,7 @@ class SetupWizardDialog(QDialog):
         self.w_bst.setCurrentText(settings.get("boost_mode") or "OFF")
         self.w_vvt = QComboBox(); self.w_vvt.addItems(["Disabled", "Intake", "Exhaust", "Intake & Exhaust"])
         self.w_vvt.setCurrentText(settings.get("vvt_mode") or "Disabled")
-        self.w_fan = QCheckBox("Fan control"); self.w_fan.setChecked(bool(settings.get("fan_enable", True)))
+        self.w_fan = QCheckBox("Fan control"); self.w_fan.setChecked(bool(settings.get("fan_enable", False)))
         self.w_fanc = QSpinBox(); self.w_fanc.setRange(60, 130); self.w_fanc.setValue(int(settings.get("fan_c") or 95))
         l3.addRow(self.w_ect)
         l3.addRow(self.w_iat)
@@ -1187,7 +1480,41 @@ class MotorsportDialog(QDialog):
         self.lc_bst = spin(0, 250, settings.get("launch_boost_kpa") or 0, " kPa")
         f.addRow(self.lc_en); f.addRow("Launch RPM", self.lc_rpm)
         f.addRow("Min TPS", self.lc_tps); f.addRow("Target boost", self.lc_bst)
+        self.lc_decay = QCheckBox("Enable VSS launch decay curve (fuel + timing)")
+        self.lc_decay.setChecked(bool(settings.get("launch_decay_enable", False)))
+        self.lc_decay.setToolTip("After clutch release, taper extra fuel and retard vs vehicle speed")
+        f.addRow(self.lc_decay)
+        # 8-point VSS curves (kph / fuel% / retard°)
+        self.lc_table = QTableWidget(8, 3)
+        self.lc_table.setHorizontalHeaderLabels(["VSS kph", "Fuel %", "Retard °"])
+        self.lc_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.lc_table.setMaximumHeight(220)
+        def_vss = settings.get("launch_vss_bins") or [0, 20, 40, 60, 80, 100, 130, 160]
+        def_fuel = settings.get("launch_fuel_tbl") or [25, 20, 14, 8, 4, 2, 0, 0]
+        def_ret = settings.get("launch_retard_tbl") or [15, 12, 8, 5, 2, 0, 0, 0]
+        for i in range(8):
+            self.lc_table.setItem(i, 0, QTableWidgetItem(str(def_vss[i] if i < len(def_vss) else 0)))
+            self.lc_table.setItem(i, 1, QTableWidgetItem(str(def_fuel[i] if i < len(def_fuel) else 0)))
+            self.lc_table.setItem(i, 2, QTableWidgetItem(str(def_ret[i] if i < len(def_ret) else 0)))
+        self.lc_curve_lbl = QLabel("Decay curve (row 0 = launch, last = fully out)")
+        f.addRow(self.lc_curve_lbl)
+        f.addRow(self.lc_table)
+        def _lc_decay_fields(on: bool):
+            self.lc_table.setEnabled(bool(on))
+            self.lc_curve_lbl.setEnabled(bool(on))
+        self.lc_decay.toggled.connect(_lc_decay_fields)
+        _lc_decay_fields(self.lc_decay.isChecked())
         tabs.addTab(w, "Launch")
+
+        # VSS
+        w = QWidget(); f = QFormLayout(w)
+        self.vss_en = QCheckBox("Vehicle speed sensor enable (PC15)")
+        self.vss_en.setChecked(bool(settings.get("vss_enable", False)))
+        self.vss_ppk = spin(100, 50000, settings.get("vss_pulses_per_km") or 8000, " p/km")
+        f.addRow(self.vss_en)
+        f.addRow("Pulses per km", self.vss_ppk)
+        f.addRow(QLabel("Hall/VR (conditioned) on PC15, 3.3 V max. Required for launch decay."))
+        tabs.addTab(w, "VSS")
 
         # ALS
         w = QWidget(); f = QFormLayout(w)
@@ -1217,6 +1544,31 @@ class MotorsportDialog(QDialog):
         f.addRow(QLabel("Clutch used by Launch + FFS (PB13)."))
         tabs.addTab(w, "Clutch")
 
+        # Flex fuel (PA6 analog, 10 s sample)
+        w = QWidget(); f = QFormLayout(w)
+        self.flex_en = QCheckBox("Flex fuel sensor enable (PA6)")
+        self.flex_en.setChecked(bool(settings.get("flex_enable", False)))
+        self.flex_e0 = QSpinBox(); self.flex_e0.setRange(0, 4095)
+        self.flex_e0.setValue(int(settings.get("flex_adc_e0") or 410))
+        self.flex_e100 = QSpinBox(); self.flex_e100.setRange(0, 4095)
+        self.flex_e100.setValue(int(settings.get("flex_adc_e100") or 3686))
+        self.flex_fuel = QDoubleSpinBox(); self.flex_fuel.setRange(0.0, 12.0)
+        self.flex_fuel.setDecimals(1); self.flex_fuel.setSingleStep(0.1)
+        self.flex_fuel.setValue(float(settings.get("flex_fuel_pct_per10") or 4.7))
+        self.flex_fuel.setSuffix(" % / 10% E")
+        self.flex_ign = QDoubleSpinBox(); self.flex_ign.setRange(0.0, 3.0)
+        self.flex_ign.setDecimals(1); self.flex_ign.setSingleStep(0.1)
+        self.flex_ign.setValue(float(settings.get("flex_ign_deg_per10") or 0.8))
+        self.flex_ign.setSuffix(" ° / 10% E")
+        f.addRow(self.flex_en)
+        f.addRow("ADC at E0", self.flex_e0)
+        f.addRow("ADC at E100", self.flex_e100)
+        f.addRow("Fuel add", self.flex_fuel)
+        f.addRow("Ign add", self.flex_ign)
+        f.addRow(QLabel("PA6 analog. 0.5–4.5 V GM sensor via 5→3.3 divider.\n"
+                       "Sampled every 10 s. E85 ≈ +40% fuel, +7°."))
+        tabs.addTab(w, "Flex fuel")
+
         # Optional buttons when shown as a dialog; hidden when embedded in a tab
         self._bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self._bb.accepted.connect(self.accept)
@@ -1232,6 +1584,25 @@ class MotorsportDialog(QDialog):
         settings["launch_rpm"] = self.lc_rpm.value()
         settings["launch_tps"] = self.lc_tps.value()
         settings["launch_boost_kpa"] = self.lc_bst.value()
+        if hasattr(self, "lc_decay"):
+            settings["launch_decay_enable"] = self.lc_decay.isChecked()
+            vss_b, fuel_b, ret_b = [], [], []
+            for i in range(8):
+                def cell(r, c, default=0.0):
+                    it = self.lc_table.item(r, c)
+                    try:
+                        return float(it.text()) if it else default
+                    except Exception:
+                        return default
+                vss_b.append(cell(i, 0))
+                fuel_b.append(cell(i, 1))
+                ret_b.append(cell(i, 2))
+            settings["launch_vss_bins"] = vss_b
+            settings["launch_fuel_tbl"] = fuel_b
+            settings["launch_retard_tbl"] = ret_b
+        if hasattr(self, "vss_en"):
+            settings["vss_enable"] = self.vss_en.isChecked()
+            settings["vss_pulses_per_km"] = int(self.vss_ppk.value())
         settings["als_enable"] = self.als_en.isChecked()
         settings["als_retard"] = self.als_ret.value()
         settings["als_fuel_pct"] = self.als_fuel.value()
@@ -1240,3 +1611,9 @@ class MotorsportDialog(QDialog):
         settings["ffs_tps"] = self.ffs_tps.value()
         settings["ffs_retard"] = self.ffs_ret.value()
         settings["clutch_enable"] = self.clutch_en.isChecked()
+        if hasattr(self, "flex_en"):
+            settings["flex_enable"] = self.flex_en.isChecked()
+            settings["flex_adc_e0"] = int(self.flex_e0.value())
+            settings["flex_adc_e100"] = int(self.flex_e100.value())
+            settings["flex_fuel_pct_per10"] = float(self.flex_fuel.value())
+            settings["flex_ign_deg_per10"] = float(self.flex_ign.value())

@@ -226,18 +226,6 @@ void ECU_EnableETB(uint8_t en)
 }
 
 void serviceOutputs(void) {
-  static uint8_t tachoGpioInit = 0;
-  if (!tachoGpioInit) {
-    tachoGpioInit = 1;
-    __HAL_RCC_GPIOC_CLK_ENABLE();
-    GPIO_InitTypeDef gi = {0};
-    gi.Pin = TACHO_Pin;
-    gi.Mode = GPIO_MODE_OUTPUT_PP;
-    gi.Pull = GPIO_NOPULL;
-    gi.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(TACHO_GPIO_Port, &gi);
-    ECU_TACHO_LO();
-  }
   static uint32_t lastRun = 0;
   uint32_t now = millis();
 
@@ -250,40 +238,17 @@ void serviceOutputs(void) {
   } else if (now - lastRun > 3000) {
     fpOn = 0;
   }
-  if (fpOn) ECU_FP_HI(); else ECU_FP_LO();
 
-    /* Fan: OFF unless IO enables it */
+  /* Fan with hysteresis: on at gFanOnC, off at gFanOffC */
   if (!gFanEnable) {
     fanOn = 0;
-    ECU_FAN_LO();
+  } else if (fanOn) {
+    fanOn = (engEct > gFanOffC) ? 1 : 0;
   } else {
-    /* hysteresis: on at gFanOnC, off at gFanOffC */
-    if (fanOn)
-      fanOn = (engEct > gFanOffC) ? 1 : 0;
-    else
-      fanOn = (engEct >= gFanOnC) ? 1 : 0;
-    if (fanOn) ECU_FAN_HI(); else ECU_FAN_LO();
+    fanOn = (engEct >= gFanOnC) ? 1 : 0;
   }
-
-  /* Tachometer on spare PC14 — gTachoPpr pulses per crank revolution */
-  if (!gTachoEnable) {
-    ECU_TACHO_LO();
-  } else if (syncLocked && rpmLive >= 30 && gTeeth >= 2) {
-    uint8_t ppr = gTachoPpr;
-    if (ppr < 1) ppr = 1;
-    if (ppr > 12) ppr = 12;
-    uint16_t teeth = gTeeth;
-    uint16_t step = teeth / ppr;
-    if (step < 1) step = 1;
-    uint16_t phase = (uint16_t)toothIndex % step;
-    /* ~50% duty square within each step */
-    if (phase < (step / 2u))
-      ECU_TACHO_HI();
-    else
-      ECU_TACHO_LO();
-  } else {
-    ECU_TACHO_LO();
-  }
+  if (fpOn) ECU_FP_HI(); else ECU_FP_LO();
+  if (fanOn) ECU_FAN_HI(); else ECU_FAN_LO();
 }
 
 /** One-shot injector prime at start of cranking */
@@ -361,5 +326,6 @@ void ECU_SetVVT(uint8_t intake_pct, uint8_t exhaust_pct)
   }
 }
 
-
+/* ── ADC ────────────────────────────────────────────────────── */
+/* readAdc() is only defined in ecu_adc.c */
 

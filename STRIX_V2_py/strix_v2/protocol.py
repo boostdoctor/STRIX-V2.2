@@ -29,7 +29,19 @@ KEY_MAP = {
     "STFT": "stft",
     "LTFT": "ltft",
     "O2": "o2",
-    "KNK": "knock",
+    "ETH": "eth",
+    "ETHANOL": "eth",
+    "VSS": "vss",
+    "LCD": "lc_decay",
+    "LCF": "lc_fuel",
+    "LCR": "lc_ret",
+    "ASE": "ase",
+    "FLOOD": "flood",
+    "DFCO": "dfco",
+    "VVT1": "vvt1",
+    "VVT2": "vvt2",
+    "CUT": "cut",
+    "OFC": "ofc",
     "DWELL": "dwell",
     "CYL": "cyl",
     "UID": "ecu_uid",
@@ -48,6 +60,7 @@ def default_live() -> dict[str, Any]:
         "load": 0.0, "syncq": 0,
         "sync": 0,
         "cam": 0,
+        "eth": 0.0,
         "fan": 0,
         "fp": 0,
         "ign": 0.0,
@@ -63,6 +76,16 @@ def default_live() -> dict[str, Any]:
         "stft": 0.0,
         "ltft": 0.0,
         "dwell": 0,
+        "ase": 0,
+        "vss": 0.0,
+        "lc_decay": 0,
+        "lc_fuel": 0.0,
+        "lc_ret": 0.0,
+        "flood": 0,
+        "dfco": 0,
+        "vvt1": 0.0,
+        "vvt2": 0.0,
+        "cut": 0,
         "cyl": 4,
         "ecu_uid": "",
     }
@@ -114,7 +137,7 @@ def parse_line(line: str, live: dict[str, Any]) -> dict[str, Any]:
                 live["ecu_uid"] = val
                 accepted += 1
                 continue
-            if dest in ("sync", "cam", "fan", "fp", "pwus", "cyl", "dwell"):
+            if dest in ("sync", "cam", "fan", "fp", "pwus", "cyl", "dwell", "ase", "dfco", "cut", "lc_decay"):
                 live[dest] = int(float(val))
             elif dest == "rpm":
                 live[dest] = int(float(val))

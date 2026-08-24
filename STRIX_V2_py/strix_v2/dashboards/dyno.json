@@ -1,0 +1,14 @@
+{
+  "name": "Dyno",
+  "gauges": [
+    {"key": "rpm",  "title": "RPM",    "unit": "",    "min": 0,   "max": 9000, "hero": true,  "row": 0, "col": 0, "rowspan": 2},
+    {"key": "load", "title": "LOAD",   "unit": "",    "min": 0,   "max": 120,  "hero": false, "row": 0, "col": 1},
+    {"key": "map",  "title": "MAP",    "unit": "kPa", "min": 0,   "max": 300,  "hero": false, "row": 0, "col": 2},
+    {"key": "afr",  "title": "AFR",    "unit": "",    "min": 10,  "max": 18,   "hero": false, "row": 0, "col": 3},
+    {"key": "ign",  "title": "IGN",    "unit": "°",   "min": -10, "max": 45,   "hero": false, "row": 1, "col": 1},
+    {"key": "pw",   "title": "INJ",    "unit": "ms",  "min": 0,   "max": 20,   "hero": false, "row": 1, "col": 2},
+    {"key": "lam",  "title": "LAM",    "unit": "",    "min": 0.7, "max": 1.3,  "hero": false, "row": 1, "col": 3},
+    {"key": "ect",  "title": "ECT",    "unit": "°C",  "min": 60,  "max": 110,  "hero": false, "row": 0, "col": 4},
+    {"key": "iat",  "title": "IAT",    "unit": "°C",  "min": -10, "max": 80,   "hero": false, "row": 1, "col": 4}
+  ]
+}

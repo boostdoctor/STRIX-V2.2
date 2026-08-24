@@ -12,7 +12,7 @@ def _heat(v: float, vmax: float, kind: str = "ign") -> QColor:
     if vmax <= 0:
         vmax = 1.0
     t = max(0.0, min(1.0, float(v) / vmax))
-    if kind in ("ign", "vvt", "knock"):
+    if kind in ("ign", "vvt"):
         r = int(min(255, max(0, 60 + t * 420)))
         g = int(min(255, max(0, 180 - abs(t - 0.45) * 280)))
         b = int(min(255, max(0, 200 - t * 180)))
@@ -80,10 +80,22 @@ class _Canvas(QWidget):
                 elif (r, c) == (v.sel_r, v.sel_c):
                     p.setPen(QPen(QColor("#ffff66"), 2))
                     p.drawRect(rect.adjusted(0.5, 0.5, -0.5, -0.5))
-                txt = f"{int(val)}" if v.kind in ("ign", "vvt", "knock") else f"{val:.1f}"
+                txt = f"{int(val)}" if v.kind in ("ign", "vvt") else f"{val:.1f}"
                 p.setPen(QColor("#ffffff"))
                 p.drawText(rect, Qt.AlignCenter, txt)
-        # live crosshair
+        # live trail (oldest → newest fade)
+        trail = getattr(v, "trail", None) or []
+        ntr = len(trail)
+        for i, (tr, tc) in enumerate(trail):
+            if not (0 <= tr < v.rows and 0 <= tc < v.cols):
+                continue
+            age = (i + 1) / max(1, ntr)
+            alpha = int(40 + 140 * age)
+            rr = QRectF(left + tc * cw, top + tr * ch, cw - 1, ch - 1)
+            p.setPen(QPen(QColor(0, 200, 255, alpha), 1))
+            p.setBrush(QColor(0, 180, 220, int(18 + 40 * age)))
+            p.drawRect(rr)
+        # live crosshair (current cell)
         if 0 <= v.live_r < v.rows and 0 <= v.live_c < v.cols:
             lr = QRectF(left + v.live_c * cw, top + v.live_r * ch, cw - 1, ch - 1)
             p.setPen(QPen(QColor("#00ffcc"), 3))
@@ -188,6 +200,8 @@ class MapView(QWidget):
         self._stable_live = (-1, -1)
         self._live_hold = 0
         self.snap_live = True
+        self.trail: list[tuple[int, int]] = []
+        self._trail_max = 50
         self._clip = None  # copy buffer
 
         root = QVBoxLayout(self)
@@ -217,7 +231,7 @@ class MapView(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
 
     def _update_legend(self):
-        self.legend.setText(f"Scale 0 → {self.vmax:g}   |  yellow border = unsaved  |  cyan = live  |  Ctrl+drag select")
+        self.legend.setText(f"Scale 0 → {self.vmax:g}  |  cyan=live  |  trail=last 50  |  Arrows select  |  +/- or PgUp/Dn  |  Shift×5  |  Ctrl+C/V  |  Ctrl+P %")
 
     def set_load_bins(self, bins, label="MAP"):
         self.load_bins = list(bins)[: self.rows]
@@ -262,8 +276,13 @@ class MapView(QWidget):
                 r = i
         r = max(0, min(self.rows - 1, r))
         c = max(0, min(self.cols - 1, c))
+        prev = (self.live_r, self.live_c)
         if not self.snap_live:
             self.live_r, self.live_c = r, c
+            if (r, c) != prev and r >= 0:
+                self.trail.append((r, c))
+                if len(self.trail) > self._trail_max:
+                    self.trail = self.trail[-self._trail_max:]
             self._canvas.update()
             return
         # stable hold filter
@@ -278,6 +297,10 @@ class MapView(QWidget):
             self.live_r, self.live_c = r, c
             self._live_hold = 1
         if self._live_hold >= 3:
+            if self._stable_live != (r, c) and r >= 0:
+                self.trail.append((r, c))
+                if len(self.trail) > self._trail_max:
+                    self.trail = self.trail[-self._trail_max:]
             self._stable_live = (r, c)
             self._canvas.update()
 
@@ -291,7 +314,7 @@ class MapView(QWidget):
         if e.key() == Qt.Key_P and (e.modifiers() & Qt.ControlModifier):
             self._pct_dialog()
             return
-        step = 1.0 if self.kind in ("ign", "vvt", "knock", "boost") else 0.1
+        step = 1.0 if self.kind in ("ign", "vvt", "boost") else 0.1
         if e.modifiers() & Qt.ShiftModifier:
             step *= 5.0
         r, c = self.sel_r, self.sel_c
@@ -303,16 +326,33 @@ class MapView(QWidget):
             self.sel_c = max(0, c - 1)
         elif e.key() == Qt.Key_Right:
             self.sel_c = min(self.cols - 1, c + 1)
+        elif e.key() == Qt.Key_Home:
+            self.sel_c = 0
+        elif e.key() == Qt.Key_End:
+            self.sel_c = self.cols - 1
+        elif e.key() == Qt.Key_A and (e.modifiers() & Qt.ControlModifier):
+            self.selected = {(rr, cc) for rr in range(self.rows) for cc in range(self.cols)}
+            self._canvas.update()
+            return
         elif e.key() in (Qt.Key_Plus, Qt.Key_Equal, Qt.Key_PageUp):
             self._nudge_sel(step)
             return
         elif e.key() in (Qt.Key_Minus, Qt.Key_PageDown):
             self._nudge_sel(-step)
             return
+        elif e.key() == Qt.Key_BracketLeft:
+            self._nudge_sel(-step * 10)
+            return
+        elif e.key() == Qt.Key_BracketRight:
+            self._nudge_sel(step * 10)
+            return
         else:
             super().keyPressEvent(e)
             return
-        self.selected = {(self.sel_r, self.sel_c)}
+        if not (e.modifiers() & Qt.ShiftModifier):
+            self.selected = {(self.sel_r, self.sel_c)}
+        else:
+            self.selected.add((self.sel_r, self.sel_c))
         self._canvas.update()
 
     def _copy(self):
@@ -336,7 +376,7 @@ class MapView(QWidget):
             for dc, val in enumerate(row):
                 r, c = r0 + dr, c0 + dc
                 if r < self.rows and c < self.cols:
-                    v = int(round(val)) if self.kind in ("ign", "vvt", "knock") else round(val, 1)
+                    v = int(round(val)) if self.kind in ("ign", "vvt") else round(val, 1)
                     self.table[r][c] = v
                     self._mark_dirty(r, c)
                     self.cell_changed.emit(r, c, float(v))
@@ -349,7 +389,7 @@ class MapView(QWidget):
             return
         for r, c in cells:
             v = float(self.table[r][c]) * (1.0 + pct / 100.0)
-            v = int(round(v)) if self.kind in ("ign", "vvt", "knock") else round(v, 1)
+            v = int(round(v)) if self.kind in ("ign", "vvt") else round(v, 1)
             self.table[r][c] = v
             self._mark_dirty(r, c)
             self.cell_changed.emit(r, c, float(v))
@@ -359,7 +399,7 @@ class MapView(QWidget):
         cells = self.selected or {(self.sel_r, self.sel_c)}
         for r, c in cells:
             v = float(self.table[r][c]) + step
-            v = int(round(v)) if self.kind in ("ign", "vvt", "knock") else round(v, 1)
+            v = int(round(v)) if self.kind in ("ign", "vvt") else round(v, 1)
             self.table[r][c] = v
             self._mark_dirty(r, c)
             self.cell_changed.emit(r, c, float(v))
@@ -378,7 +418,7 @@ class MapView(QWidget):
                             acc += float(snap[rr][cc])
                             n += 1
                 v = acc / max(1, n)
-                v = int(round(v)) if self.kind in ("ign", "vvt", "knock") else round(v, 1)
+                v = int(round(v)) if self.kind in ("ign", "vvt") else round(v, 1)
                 self.table[r][c] = v
                 self._mark_dirty(r, c)
                 self.cell_changed.emit(r, c, float(v))

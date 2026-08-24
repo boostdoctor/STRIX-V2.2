@@ -16,13 +16,26 @@
 
 /* Idle / VVT state lives in ecu_runtime.c — only functions here */
 
+/* 5-point target idle RPM vs ECT (editable via SET:IDLETGT,i,ect,rpm) */
+float idleTgtEctBins[5] = {-10.0f, 20.0f, 40.0f, 60.0f, 90.0f};
+float idleTgtRpmTbl[5]  = {1400.0f, 1100.0f, 950.0f, 850.0f, 850.0f};
+
 float idleTargetFromEct(float ectC)
 {
-  if (ectC < -10.0f) return 1400.0f;
-  if (ectC < 20.0f)  return 1200.0f - (ectC + 10.0f) * (200.0f / 30.0f);
-  if (ectC < 60.0f)  return 1000.0f - (ectC - 20.0f) * (150.0f / 40.0f);
-  if (ectC < 90.0f)  return idleTargetRpm > 700.0f ? idleTargetRpm : 850.0f;
-  return idleTargetRpm;
+  /* Linear interpolate target RPM vs coolant */
+  if (ectC <= idleTgtEctBins[0])
+    return idleTgtRpmTbl[0];
+  if (ectC >= idleTgtEctBins[4])
+    return idleTgtRpmTbl[4];
+  for (int i = 0; i < 4; i++) {
+    float e0 = idleTgtEctBins[i];
+    float e1 = idleTgtEctBins[i + 1];
+    if (ectC >= e0 && ectC <= e1) {
+      float t = (e1 > e0) ? (ectC - e0) / (e1 - e0) : 0.0f;
+      return idleTgtRpmTbl[i] + t * (idleTgtRpmTbl[i + 1] - idleTgtRpmTbl[i]);
+    }
+  }
+  return idleTargetRpm > 700.0f ? idleTargetRpm : 850.0f;
 }
 
 void serviceIdleControl(void)

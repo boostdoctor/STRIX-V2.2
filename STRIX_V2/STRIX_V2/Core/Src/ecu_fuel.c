@@ -1,4 +1,4 @@
-/* ecu_fuel.c — injection scheduling */
+/* ecu_fuel.c — auto-split from ecu_app.c */
 #include "main.h"
 #include "ecu_config.h"
 #include "ecu_pins.h"
@@ -14,22 +14,25 @@
 #include <math.h>
 #include <stdint.h>
 
-/*
- * BATCH / wasted path: angle-based SOI only (NO injReq).
- * SEQUENTIAL: injReq from gap/cam only (NO angle SOI).
- * This prevents the historic double-fire when both paths armed the same cyl.
- */
-void serviceInjection(void)
-{
+/* ---- lines 1302-1517 ---- */
+void serviceInjection(void) {
   uint32_t now = micros();
-  if ((rpmCutActive && gRpmCutMode == 0) || dfcoActive) {
+
+  /* Flood clear: TPS open while cranking → cut all injectors */
+  floodClearActive = 0;
+  if (floodClearEnable && rpmLive > 0 && rpmLive < (int)crankAdvRpm
+      && engTps >= floodClearTps) {
+    floodClearActive = 1;
+  }
+
+  if ((rpmCutActive && gRpmCutMode == 0) || dfcoActive || floodClearActive) {
     for (uint8_t i = 1; i <= MAX_CYL; i++) {
       ECU_INJ_LO(i); injOn[i] = 0; injReq[i] = 0;
     }
     return;
   }
   uint16_t pw = injPwUs;
-  if (pw < 400) pw = 400;   /* min 400 us */
+  if (pw < 800) pw = 800;
   if (pw > 20000) pw = 20000;
 
   for (uint8_t i = 1; i <= MAX_CYL; i++) {
@@ -37,10 +40,11 @@ void serviceInjection(void)
       ECU_INJ_LO(i);
       injOn[i] = 0;
       injFiredCyc[i] = 1;
+      injReq[i] = 0;
     }
   }
 
-  if (!syncLocked || toothPeriodUs < 40 || toothPeriodUs > 800000UL) {
+  if (!syncLocked || rpmLive < 30 || toothPeriodUs < 40) {
     for (uint8_t i = 1; i <= MAX_CYL; i++) {
       if (!injOn[i]) {
         ECU_INJ_LO(i);
@@ -50,82 +54,86 @@ void serviceInjection(void)
     return;
   }
 
-  float usPerRev = (float)toothPeriodUs * (float)((gTeeth > 0) ? gTeeth : 36);
+  float usPerRev = (float)toothPeriodUs * (float)gTeeth;
   if (usPerRev < 400.0f) return;
 
   uint8_t seq = injSequentialActive();
   float cycle = seq ? 720.0f : 360.0f;
   float deg = crankDeg;
   float band = 360.0f / (float)((gTeeth > 0) ? gTeeth : 36);
+  if (band < 4.0f) band = 4.0f;
+  if (band > 20.0f) band = 20.0f;
   float eoiOfs = gEoiBtdc;
   if (eoiOfs < 10.0f) eoiOfs = 10.0f;
-  if (eoiOfs > 400.0f) eoiOfs = 400.0f;
+  if (eoiOfs > 540.0f) eoiOfs = 540.0f;
+  float trig = (float)gTrigAngle;
+  float degPerUs = 360.0f / usPerRev;
 
   uint8_t n = gCyl;
   if (n > MAX_CYL) n = MAX_CYL;
-  if (!seq) n = (gCyl >= 4) ? 4 : gCyl;
+  if (!seq && n > 4) n = 4;
 
   for (uint8_t i = 1; i <= n; i++) {
     float tdc;
-    if (seq) {
+    if (seq)
       tdc = tdcDeg(i);
-    } else {
-      if (i == 1 || i == 4) tdc = 0.0f;
-      else if (i == 2 || i == 3) tdc = 180.0f;
-      else continue;
-    }
+    else if (i == 1 || i == 4)
+      tdc = 0.0f;
+    else if (i == 2 || i == 3)
+      tdc = 180.0f;
+    else
+      continue;
 
-    float eoi = wrapAngle(tdc - eoiOfs, cycle);
+    /* Same frame as spark: gap 0° + trigger = compression TDC. */
+    float trueTdc = wrapAngle(tdc + trig, cycle);
+    float eoi = wrapAngle(trueTdc - eoiOfs, cycle);
+    float pwDeg = (float)pw * degPerUs;
+    if (pwDeg < 1.0f) pwDeg = 1.0f;
+    float soi = wrapAngle(eoi - pwDeg, cycle);
 
-    /* Re-arm once well past EOI */
     if (injFiredCyc[i] && !injOn[i]) {
       float past = wrapAngle(deg - eoi, cycle);
-      if (past > cycle * 0.40f && past < cycle * 0.95f)
+      if (past > (cycle * 0.25f) && past < (cycle * 0.95f))
         injFiredCyc[i] = 0;
     }
 
-    uint8_t start = 0;
+    /* Angle-only start: one pulse per cycle. injReq is ignored to stop double-fire. */
+    (void)injReq[i];
+    injReq[i] = 0;
 
-    if (seq) {
-      /* Sequential: ONLY injReq from decoder (once per 720°) */
-      if (injReq[i] && !injOn[i] && !injFiredCyc[i]) {
-        start = 1;
-        injReq[i] = 0;
-      }
-    } else {
-      /* Batch: ONLY angle SOI — ignore injReq to stop double-fire */
-      injReq[i] = 0;
-      if (!injOn[i] && !injFiredCyc[i]) {
-        float degPerUs = 360.0f / usPerRev;
-        float pwDeg = (float)pw * degPerUs;
-        if (pwDeg < 1.0f) pwDeg = 1.0f;
-        float soi = wrapAngle(eoi - pwDeg, cycle);
-        float cap = band * 1.5f;
-        if (cap < 8.0f) cap = 8.0f;
-        if (cap > 18.0f) cap = 18.0f;
-        if (angleActive(deg, soi, wrapAngle(soi + cap, cycle), cycle))
-          start = 1;
-      }
-    }
-
-    if (start) {
-      uint16_t pwc = pw;
-      if (i >= 1 && i <= MAX_CYL) {
+    if (!injOn[i] && !injFiredCyc[i]) {
+      float cap = band * 1.5f;
+      if (cap < 8.0f) cap = 8.0f;
+      if (cap > 18.0f) cap = 18.0f;
+      if (angleActive(deg, soi, wrapAngle(soi + cap, cycle), cycle)) {
+        /* Diagnostic injector kill: bit0 = cyl1 */
+        if (injDisableMask & (1u << (i - 1))) {
+          ECU_INJ_LO(i);
+          injOn[i] = 0;
+          injFiredCyc[i] = 1;
+          continue;
+        }
+        uint16_t pwc = pw;
         float tr = 1.0f + cylTrimPct[i] * 0.01f;
         if (tr < 0.75f) tr = 0.75f;
         if (tr > 1.25f) tr = 1.25f;
+        /* Idle 5×5 fuel correction near idle */
+        if (idleActive || (rpmLive > 0 && rpmLive < 1400 && engTps < 5.0f)) {
+          tr *= 1.0f + idleFuelLookup(engEct, (float)rpmLive) * 0.01f;
+        }
         pwc = (uint16_t)((float)pw * tr);
-        if (pwc < 400) pwc = 400;
+        if (pwc < 800) pwc = 800;
         if (pwc > 20000) pwc = 20000;
+        ECU_INJ_HI(i);
+        injOn[i] = 1;
+        injEndUs[i] = now + pwc;
       }
-      ECU_INJ_HI(i);
-      injOn[i] = 1;
-      injEndUs[i] = now + pwc;
-      injReq[i] = 0;
-      injFiredCyc[i] = 1;
     }
   }
 }
+
+
+/* Globals for boost/O2/ALS: ecu_runtime.c — ECU_SetCylTrim: ecu_features.c */
 
 void serviceO2ClosedLoop(void)
 {
@@ -136,57 +144,112 @@ void serviceO2ClosedLoop(void)
   if (dt > 0.05f) dt = 0.05f;
   o2LastMs = now;
 
-  /* Filter O2 voltage */
-  o2Filt = o2Filt * 0.85f + engO2 * 0.15f;
+  /* Filter O2 voltage (controller 0–3.3 V scaled) */
+  o2Filt = o2Filt * 0.82f + engO2 * 0.18f;
 
-  /* Enable conditions */
   o2ClActive = 0;
-  if (!o2ClEnable || o2SensorMode == O2_MODE_OFF) {
-    stftPct *= 0.99f;
+  if (!o2ClEnable || o2SensorMode == O2_MODE_OFF || !sensO2En) {
+    stftPct *= (1.0f - 0.4f * dt); /* bleed toward 0 when disabled */
     return;
   }
-  if (aseActive || dfcoActive || alsActive)
+
+  /* Freeze learning during transient events */
+  if (aseActive || dfcoActive || alsActive || rpmCutActive || floodClearActive
+      || launchActive || launchDecayActive) {
+    /* keep last STFT but do not learn */
     return;
-  if (!syncLocked || rpmLive < 800 || rpmLive > 4000) return;
+  }
+  if (!syncLocked || engBat < 11.0f) {
+    stftPct *= (1.0f - 0.3f * dt);
+    return;
+  }
+
+  if (o2SensorMode == O2_MODE_WB) {
+    /* ── Wideband closed loop ──────────────────────────────────
+     * Error in AFR: lean (engAfr > tgt) → add fuel (STFT +)
+     *               rich (engAfr < tgt) → cut fuel (STFT −)
+     * Proportional rate scales with |err|; deadband ±0.05 AFR.
+     * Authority: STFT_MAX. LTFT learns only in steady cruise.
+     */
+    if (rpmLive < 500 || rpmLive > 7500) {
+      stftPct *= (1.0f - 0.25f * dt);
+      return;
+    }
+    if (engEct < 50.0f) return;          /* cold: ASE/WUE own fuel */
+    if (engTps > 92.0f && rpmLive > 4500) {
+      /* WOT high-RPM: hold STFT, no further learn (safety) */
+      o2ClActive = 1;
+      return;
+    }
+
+    float loadAxis = (engMap > 5.0f) ? engMap : engLoad;
+    float tgt = afrTargetLookup(loadAxis, (float)rpmLive);
+    if (tgt < 10.0f) tgt = 10.0f;
+    if (tgt > 16.5f) tgt = 16.5f;
+
+    float err = engAfr - tgt;            /* + lean, − rich */
+    const float dead = 0.05f;
+    o2ClActive = 1;
+
+    if (err > dead) {
+      /* lean → add fuel; gain rises with error up to ~2 AFR */
+      float mag = err - dead;
+      if (mag > 2.0f) mag = 2.0f;
+      float rate = STFT_STEP * (0.6f + mag * 1.4f) * (dt * 100.0f);
+      stftPct += rate;
+    } else if (err < -dead) {
+      float mag = -err - dead;
+      if (mag > 2.0f) mag = 2.0f;
+      float rate = STFT_STEP * (0.6f + mag * 1.4f) * (dt * 100.0f);
+      stftPct -= rate;
+    } else {
+      /* in band — mild decay toward 0 so LTFT can absorb */
+      stftPct *= (1.0f - 0.15f * dt);
+    }
+
+    if (stftPct >  STFT_MAX) stftPct =  STFT_MAX;
+    if (stftPct < -STFT_MAX) stftPct = -STFT_MAX;
+
+    /* LTFT: only when nearly on-target, mid load, warm, no boost */
+    uint8_t steady = (fabsf(err) < 0.15f)
+                  && (engTps > 8.0f && engTps < 55.0f)
+                  && (rpmLive > 1200 && rpmLive < 4000)
+                  && (engEct >= 70.0f)
+                  && (boostTargetKpa < 5.0f);
+    if (steady) {
+      ltftPct += (stftPct - ltftPct) * LTFT_RATE * (dt * 40.0f);
+      if (ltftPct >  LTFT_MAX) ltftPct =  LTFT_MAX;
+      if (ltftPct < -LTFT_MAX) ltftPct = -LTFT_MAX;
+    }
+    return;
+  }
+
+  /* ── Narrowband closed loop ──────────────────────────────── */
+  if (rpmLive < 800 || rpmLive > 4000) return;
   if (engEct < 60.0f) return;
   if (engTps > 60.0f) return;
   if (boostTargetKpa > 10.0f) return;
-  if (engBat < 11.0f) return;
 
   o2ClActive = 1;
-
-  if (o2SensorMode == O2_MODE_WB) {
-    /* Wideband: drive engAfr → targetAfr (rich = low AFR → cut fuel) */
-    float err = engAfr - targetAfr; /* >0 lean, <0 rich */
-    if (err < -0.05f)
-      stftPct -= STFT_STEP * (dt * 100.0f);
-    else if (err > 0.05f)
-      stftPct += STFT_STEP * (dt * 100.0f);
-    else
-      stftPct *= (1.0f - 0.5f * dt);
+  if (o2Filt > O2_RICH_V) {
+    o2RichMs += (uint32_t)(dt * 1000.0f);
+    o2LeanMs = 0;
+  } else if (o2Filt < O2_LEAN_V) {
+    o2LeanMs += (uint32_t)(dt * 1000.0f);
+    o2RichMs = 0;
   } else {
-    /* Narrowband voltage windows */
-    if (o2Filt > O2_RICH_V) {
-      o2RichMs += (uint32_t)(dt * 1000.0f);
-      o2LeanMs = 0;
-    } else if (o2Filt < O2_LEAN_V) {
-      o2LeanMs += (uint32_t)(dt * 1000.0f);
-      o2RichMs = 0;
-    } else {
-      o2RichMs = 0;
-      o2LeanMs = 0;
-    }
-    if (o2RichMs > 20)
-      stftPct -= STFT_STEP * (dt * 100.0f);
-    else if (o2LeanMs > 20)
-      stftPct += STFT_STEP * (dt * 100.0f);
-    else
-      stftPct *= (1.0f - 0.5f * dt);
+    o2RichMs = 0;
+    o2LeanMs = 0;
   }
+  if (o2RichMs > 20)
+    stftPct -= STFT_STEP * (dt * 100.0f);
+  else if (o2LeanMs > 20)
+    stftPct += STFT_STEP * (dt * 100.0f);
+  else
+    stftPct *= (1.0f - 0.5f * dt);
+
   if (stftPct >  STFT_MAX) stftPct =  STFT_MAX;
   if (stftPct < -STFT_MAX) stftPct = -STFT_MAX;
-
-  /* LTFT learns slow average of STFT */
   ltftPct += (stftPct - ltftPct) * LTFT_RATE * (dt * 50.0f);
   if (ltftPct >  LTFT_MAX) ltftPct =  LTFT_MAX;
   if (ltftPct < -LTFT_MAX) ltftPct = -LTFT_MAX;
@@ -202,7 +265,7 @@ float fuelTrimMul(void)
   if (!sensO2En) return 1.0f;
   float pct = ltftPct;           /* always applied */
   if (o2ClActive)
-    pct += stftPct;              /* STFT only when NB CL active */
+    pct += stftPct;              /* STFT while CL active (NB or WB) */
   if (pct >  STFT_MAX + LTFT_MAX) pct =  STFT_MAX + LTFT_MAX;
   if (pct < -(STFT_MAX + LTFT_MAX)) pct = -(STFT_MAX + LTFT_MAX);
   return 1.0f + pct * 0.01f;
@@ -247,7 +310,6 @@ uint8_t readClutch(void)
 }
 
 
-/** Windowed dual-Goertzel knock → intensity → progressive retard */
 uint16_t readAdc(uint32_t channel); /* fwd */
 
 
@@ -317,6 +379,98 @@ float coldStartEnrichMul(void)
 
 /* After-start: full aseInitialPct at t=0, linear decay to 0 over aseDecaySec */
 /** ALS enrichment: 1 + fuel% when anti-lag active */
+
+/** Acceleration enrichment: 1 + aePctLive% based on TPS rate tip-in */
+float accelEnrichMul(void)
+{
+  if (!aeEnable || aePctLive < 0.05f)
+    return 1.0f;
+  float pct = aePctLive;
+  if (pct > aeMaxPct) pct = aeMaxPct;
+  return 1.0f + pct * 0.01f;
+}
+
+void serviceAccelEnrich(void)
+{
+  uint32_t now = HAL_GetTick();
+  if (aeLastMs == 0) {
+    aeLastMs = now;
+    aePrevTps = engTps;
+    return;
+  }
+  float dt = (float)(now - aeLastMs) * 0.001f;
+  aeLastMs = now;
+  if (dt < 0.001f) dt = 0.001f;
+  if (dt > 0.05f) dt = 0.05f;
+
+  float tps = engTps;
+  if (tps < 0.0f) tps = 0.0f;
+  if (tps > 100.0f) tps = 100.0f;
+  float tpsDot = (tps - aePrevTps) / dt; /* %/s */
+  aePrevTps = tps;
+
+  if (!aeEnable) {
+    aePctLive = 0.0f;
+    return;
+  }
+  static float aePeakPct = 0.0f;
+  /* Only enrich on positive tip-in above threshold */
+  if (tpsDot > aeTpsDotThresh) {
+    float excess = tpsDot - aeTpsDotThresh;
+    float pct = excess * aeGain;
+    if (pct > aeMaxPct) pct = aeMaxPct;
+    if (pct > aePeakPct) {
+      aePeakPct = pct;
+      aePctLive = pct;
+      aeDecayUntilMs = now + (uint32_t)aeDecayMs;
+    }
+  }
+  /* Linear decay from peak to 0 over aeDecayMs */
+  if (aePeakPct > 0.0f) {
+    if (now >= aeDecayUntilMs) {
+      aePctLive = 0.0f;
+      aePeakPct = 0.0f;
+    } else {
+      float remain = (float)(aeDecayUntilMs - now) / (float)(aeDecayMs > 0 ? aeDecayMs : 1u);
+      if (remain < 0.0f) remain = 0.0f;
+      if (remain > 1.0f) remain = 1.0f;
+      aePctLive = aePeakPct * remain;
+      if (aePctLive < 0.05f) {
+        aePctLive = 0.0f;
+        aePeakPct = 0.0f;
+      }
+    }
+  }
+}
+
+float flexFuelMul(void)
+{
+  if (!gFlexEnable)
+    return 1.0f;
+  float pct = (engEthanol / 10.0f) * gFlexFuelPctPer10;
+  if (pct < 0.0f) pct = 0.0f;
+  if (pct > 80.0f) pct = 80.0f;
+  return 1.0f + pct * 0.01f;
+}
+
+void serviceFlexFuel(void)
+{
+  static uint32_t lastMs;
+  if (!gFlexEnable)
+    return;
+  uint32_t now = HAL_GetTick();
+  if ((now - lastMs) < 10000u)
+    return;
+  lastMs = now;
+  int span = (int)gFlexAdcE100 - (int)gFlexAdcE0;
+  if (span > 50 || span < -50) {
+    float e = 100.0f * ((float)((int)adcFlex - (int)gFlexAdcE0) / (float)span);
+    if (e < 0.0f) e = 0.0f;
+    if (e > 100.0f) e = 100.0f;
+    engEthanol = e;
+  }
+}
+
 float alsFuelMul(void)
 {
   if (!alsActive)
@@ -372,14 +526,23 @@ void serviceAfterStart(void)
 
 
 /**
- * Unified ignition timing (strong definition — replaces weak stub in runtime)
- *   final = base_map - soft_limit - ALS - FFS - knock
+ * Unified ignition timing
+ *   final = base_map - soft_limit - ALS - FFS  (+ cranking override)
  *   slew-rate limited, clamped to [gIgnMinAdv, gIgnMaxAdv]
  */
 float computeIgnitionAdvance(int8_t base_adv)
 {
   float a = (float)base_adv;
   float retard = 0.0f;
+
+  /* Fixed advance while cranking */
+  if (crankAdvEnable && rpmLive > 0 && rpmLive < (int)crankAdvRpm) {
+    a = crankAdvDeg;
+    totalRetardDeg = 0.0f;
+    softLimitRetardDeg = 0.0f;
+    advTargetDeg = (int16_t)(a < 0 ? (a - 0.5f) : (a + 0.5f));
+    return a;
+  }
 
   softLimitRetardDeg = 0.0f;
   if (gRpmCutMode == 1 && gRpmLimit > 500) {
@@ -401,7 +564,14 @@ float computeIgnitionAdvance(int8_t base_adv)
                           : ffsRetardDeg;
     retard += r;
   }
-  retard += knockRetardDeg;
+  if (launchDecayActive && launchDecayRetardDeg > 0.1f) {
+    retard += launchDecayRetardDeg;
+  }
+
+  /* Idle 5×5 ign correction (ECT × RPM), only near idle */
+  if (idleActive || (rpmLive > 0 && rpmLive < 1400 && engTps < 5.0f)) {
+    a += idleIgnLookup(engEct, (float)rpmLive);
+  }
 
   totalRetardDeg = retard;
   a -= retard;

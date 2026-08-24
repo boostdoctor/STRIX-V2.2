@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import math
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPointF, Signal
 from PySide6.QtGui import QPainter, QColor, QPen, QPolygonF, QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy, QHBoxLayout
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QLabel, QSizePolicy, QHBoxLayout, QInputDialog,
+)
 
 
 class _Surface(QWidget):
@@ -23,10 +25,14 @@ class _Surface(QWidget):
         self.pan_x = 0.0
         self.pan_y = 0.0
         self._drag = None
+        self.sel_r = 0
+        self.sel_c = 0
+        self._pts: list[tuple[int, int, QPointF]] = []
+        self.edit_enabled = True
         self.setMinimumHeight(220)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setToolTip("LMB: orbit  ·  RMB: pan  ·  Wheel: zoom  ·  R: reset")
+        self.setToolTip("LMB: orbit  ·  Shift+LMB: pick cell  ·  Wheel: edit  ·  Dbl-click: type")
 
     def set_table(self, table, title="3D", rpm_bins=None, load_bins=None,
                   x_label="RPM", y_label="LOAD", z_label="VALUE"):
@@ -53,6 +59,12 @@ class _Surface(QWidget):
         self.update()
 
     def wheelEvent(self, e):
+        if self.edit_enabled and (e.modifiers() & Qt.ShiftModifier or self._near_cell(e.position())):
+            d = 1.0 if e.angleDelta().y() > 0 else -1.0
+            if e.modifiers() & Qt.ControlModifier:
+                d *= 5.0
+            self._nudge(d)
+            return
         d = e.angleDelta().y()
         if d > 0:
             self.zoom = min(4.0, self.zoom * 1.12)
@@ -60,8 +72,58 @@ class _Surface(QWidget):
             self.zoom = max(0.35, self.zoom / 1.12)
         self.update()
 
+    def _near_cell(self, pos) -> bool:
+        return self._hit(pos) is not None
+
+    def _hit(self, pos):
+        best = None
+        bd = 14.0 ** 2
+        for r, c, pt in self._pts:
+            dx = pt.x() - pos.x()
+            dy = pt.y() - pos.y()
+            d = dx * dx + dy * dy
+            if d < bd:
+                bd = d
+                best = (r, c)
+        return best
+
+    def _nudge(self, d: float):
+        r, c = self.sel_r, self.sel_c
+        if 0 <= r < len(self.table) and 0 <= c < len(self.table[r]):
+            self.table[r][c] = round(float(self.table[r][c]) + d, 1)
+            parent = self.parent()
+            while parent is not None and not hasattr(parent, "cell_changed"):
+                parent = parent.parent() if hasattr(parent, "parent") else None
+            if parent is not None:
+                parent.cell_changed.emit(r, c, float(self.table[r][c]))
+            self.update()
+
+    def mouseDoubleClickEvent(self, e):
+        hit = self._hit(e.position())
+        if hit:
+            self.sel_r, self.sel_c = hit
+        r, c = self.sel_r, self.sel_c
+        if not (0 <= r < len(self.table) and 0 <= c < len(self.table[r])):
+            return
+        val, ok = QInputDialog.getDouble(self, "Edit cell", f"[{r},{c}]", float(self.table[r][c]), -50.0, 500.0, 1)
+        if ok:
+            self.table[r][c] = val
+            par = self.parent()
+            if par is not None and hasattr(par, "cell_changed"):
+                par.cell_changed.emit(r, c, float(val))
+            self.update()
+
     def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and (e.modifiers() & Qt.ShiftModifier):
+            hit = self._hit(e.position())
+            if hit:
+                self.sel_r, self.sel_c = hit
+                self.update()
+            return
         if e.button() == Qt.LeftButton:
+            hit = self._hit(e.position())
+            if hit:
+                self.sel_r, self.sel_c = hit
             self._drag = ("orbit", e.position().toPoint())
         elif e.button() in (Qt.RightButton, Qt.MiddleButton):
             self._drag = ("pan", e.position().toPoint())
@@ -125,6 +187,11 @@ class _Surface(QWidget):
         cy = self.height() / 2 + self.pan_y + 10
         scale = min(self.width(), self.height()) / (max(rows, cols) + 2) * 0.75 * self.zoom
         proj, vmin, vmax, span, rows, cols = self._proj_fn(scale, cx, cy)
+
+        self._pts = []
+        for r in range(rows):
+            for c in range(cols):
+                self._pts.append((r, c, proj(r, c, float(self.table[r][c]))[0]))
 
         # surface quads
         quads = []
@@ -202,11 +269,22 @@ class _Surface(QWidget):
         p.setFont(QFont("Segoe UI", 9))
         p.drawText(10, 36, f"X {self.x_label}  Y {self.y_label}  Z {self.z_label}   "
                            f"[{int(vmin)} … {int(vmax) if abs(vmax)>=10 else round(vmax,1)}]")
+        if 0 <= self.sel_r < rows and 0 <= self.sel_c < cols:
+            spt = proj(self.sel_r, self.sel_c, float(self.table[self.sel_r][self.sel_c]))[0]
+            p.setBrush(QColor("#ffe080"))
+            p.setPen(QPen(QColor("#0c1018"), 1))
+            p.drawEllipse(spt, 5, 5)
+            z = self.table[self.sel_r][self.sel_c]
+            p.setPen(QColor("#ffe080"))
+            p.drawText(spt + QPointF(8, -6), f"[{self.sel_r},{self.sel_c}] {z}")
+
         p.drawText(10, self.height() - 8,
-                   f"yaw {self.yaw:.0f}°  pitch {self.pitch:.0f}°  zoom {self.zoom:.2f}")
+                   f"yaw {self.yaw:.0f}°  pitch {self.pitch:.0f}°  zoom {self.zoom:.2f}   "
+                   f"Shift+click cell · wheel edit")
 
 
 class Map3DView(QWidget):
+    cell_changed = Signal(int, int, float)
     PRESETS = [
         ("Default", 35, 28, 1.0, 0, 0),
         ("Top-down", 0, 85, 1.1, 0, 0),

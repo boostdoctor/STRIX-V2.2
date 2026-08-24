@@ -1,7 +1,7 @@
 /**
  * Timer-triggered multi-channel ADC via DMA (STM32F411)
  *
- * Preferred path: TIM9 TRGO → ADC1 regular sequence → DMA2 circular buffer.
+ * Preferred path: ADC1 continuous scan → DMA2 circular (F411: no TIM9_TRGO).
  * Fallback A: continuous circular DMA (no timer).
  * Fallback B: blocking HAL poll (legacy).
  */
@@ -47,16 +47,23 @@ static uint16_t poll_one(uint32_t ch)
   return v;
 }
 
+/* Optional: complete DMA stream setup if MSP left handle uninitialised */
+void ECU_DMA_ADC1_Config(ADC_HandleTypeDef *hadc);
+
 void ECU_Adc_Init(void)
 {
   memset((void *)adcDmaBuf, 0, sizeof(adcDmaBuf));
   ecuAdcDmaRunning = 0;
 
 #if defined(HAL_ADC_MODULE_ENABLED)
+  /* Ensure hdma_adc1 is initialised and linked (idempotent if MSP already did it) */
+  if (hadc1.DMA_Handle == NULL)
+    ECU_DMA_ADC1_Config(&hadc1);
   /*
    * Try DMA circular into adcDmaBuf.
-   * CubeMX must have: Scan + ranks = 8, DMA Continuous Requests,
-   * and either ContinuousConvMode OR external trigger (TIM9 TRGO).
+   * CubeMX: Scan ON, 8 ranks, DMA Continuous Requests ON,
+   * ContinuousConvMode ON, ExternalTrig = Software start
+   * (F411 cannot select TIM9_TRGO for ADC1).
    *
    * Length = ECU_ADC_RANK_COUNT so each sequence fills one frame.
    */
@@ -67,12 +74,13 @@ void ECU_Adc_Init(void)
 
 #if defined(HAL_TIM_MODULE_ENABLED)
   /*
-   * TIM9 TRGO=Update triggers one ADC sequence per tick when CubeMX has
-   * ContinuousConvMode=DISABLE and ExternalTrigConv=T9_TRGO.
-   * Continuous+DMA mode works without TIM9.
+   * Continuous+DMA needs no timer trigger.
+   * Optional: if you use TIM4_TRGO instead, start TIM4 base here.
    */
-  if (tim9_present())
-    (void)HAL_TIM_Base_Start(&htim9);
+  if (tim9_present()) {
+    /* unused on F411 continuous path; left for boards that still enable TIM9 */
+    (void)0;
+  }
 #endif
 }
 
@@ -99,7 +107,7 @@ uint16_t readAdc(uint32_t ch)
       case ECU_ADC_CH_CLT:   return adcDmaBuf[ECU_ADC_IX_CLT];
       case ECU_ADC_CH_IAT:   return adcDmaBuf[ECU_ADC_IX_IAT];
       case ECU_ADC_CH_O2:    return adcDmaBuf[ECU_ADC_IX_O2];
-      case ECU_ADC_CH_KNOCK: return adcDmaBuf[ECU_ADC_IX_KNOCK];
+      case ECU_ADC_CH_FLEX:  return adcDmaBuf[ECU_ADC_IX_FLEX]; /* PA6 flex — knock removed */
       case ECU_ADC_CH_VBATT: return adcDmaBuf[ECU_ADC_IX_VBATT];
       case ECU_ADC_CH_PEDAL: return adcDmaBuf[ECU_ADC_IX_PEDAL];
       default: return 0;

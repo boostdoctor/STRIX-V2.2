@@ -19,42 +19,20 @@
 
 #ifndef BST_N
 #define BST_N 8
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 #ifndef MS_RPM_N
 #define MS_RPM_N 8
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 #ifndef VVT_MAP_N
 #define VVT_MAP_N 8
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 
 #ifndef O2_MODE_OFF
 #define O2_MODE_OFF 0
 #define O2_MODE_NB  1
 #define O2_MODE_WB  2
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 
-/* Knock Goertzel */
-#ifndef KNK_WIN_N
-#define KNK_WIN_N     64
-#define KNK_FS_HZ     50000.0f
-#define KNK_F1_HZ     7000.0f
-#define KNK_F2_HZ     10000.0f
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
-#endif
 
 /* DTC codes */
 #ifndef DTC_NONE
@@ -73,35 +51,20 @@ extern volatile uint32_t outTestNextMs;
 #define DTC_AFR_RANGE   12u
 #define DTC_SYNC_LOSS   13u
 #define DTC_CAM_LOSS    14u
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 
 #ifndef BAT_CAL_N
 #define BAT_CAL_N  15
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 #ifndef MAP_CAL_N
 #define MAP_CAL_N  15
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 #ifndef CSE_N
 #define CSE_N  10
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 
 #ifndef DTC_MAX_ACTIVE
 #define DTC_MAX_ACTIVE 16
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 
 typedef struct {
@@ -112,9 +75,6 @@ typedef struct {
 
 #ifdef __cplusplus
 extern "C" {
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 
 /* Prefer DWT micros when CYCCNT enabled in ECU_Init */
@@ -146,10 +106,11 @@ extern volatile uint8_t  gTeeth, gMissing;
 extern volatile uint16_t gTrigAngle, gRpmLimit;
 extern volatile uint8_t  gRpmCutMode, rpmCutActive;
 extern volatile uint8_t  gUseTps, gLoadMode, gCyl, gCoilSmart, gDbwEnable, gIdleOutMode;
+extern volatile uint8_t  gFireOrder;        /* 0=1-3-4-2 1=1-2-4-3 2=1-3-2-4 */
 extern volatile uint8_t  gInjMode;
-extern volatile uint8_t  gIgnMode;
-extern volatile uint8_t  gCoilChargeMode; /* 0=const duty 1=const charge(time) */
-extern volatile uint8_t  gCoilType; /* 0=smart 1=dumb 2=dist */ /* 0 wasted, 1 sequential */
+extern volatile uint8_t  gIgnMode;          /* 0=wasted 1=sequential */
+extern volatile uint8_t  gCoilType;         /* 0=smart 1=dumb 2=dist */
+extern volatile uint8_t  gCoilChargeMode;   /* 0=duty 1=charge */
 extern volatile uint16_t gBatchAboveRpm;
 extern float gMapLoadRefKpa;
 
@@ -157,7 +118,6 @@ extern float gMapLoadRefKpa;
 extern volatile uint32_t lastToothUs, lastGapUs, toothPeriodUs, toothPeriodFilt;
 extern volatile uint16_t toothIndex, syncLosses, toothErrors, rpmLive;
 extern volatile uint8_t  syncLocked, camSynced, cam2Synced;
-extern volatile uint8_t  camPulseSeen; /* live-strip edge activity */
 extern volatile float    crankDeg;
 extern volatile uint8_t  cycleHalf;
 extern volatile uint32_t crankEdgeCount;
@@ -165,9 +125,19 @@ extern uint8_t gWheelId, gCamMode;
 extern float cam1PhaseDeg, cam2PhaseDeg;
 extern volatile uint32_t lastCamEdgeUs, lastCam2EdgeUs;
 extern volatile uint8_t  camLockHits, camUnlockMiss, cam2LockHits, cam2UnlockMiss;
+/* Crank PLL-style lock state machine */
+enum {
+  CRANK_PLL_SEEK = 0,    /* looking for first valid gap */
+  CRANK_PLL_CONFIRM = 1, /* collecting consecutive good gaps */
+  CRANK_PLL_LOCKED = 2,  /* hard lock — normal operation */
+  CRANK_PLL_SOFTERR = 3  /* locked but accumulating errors */
+};
+extern volatile uint8_t  crankPllState;
 extern volatile uint8_t  pllSoftErr, pllGoodStreak, gapConfirm;
 extern volatile uint16_t teethSinceGap;
 extern volatile uint8_t  gapRejectStreak;
+extern volatile uint8_t  missedGapStreak; /* consecutive expected gaps not seen */
+extern volatile uint8_t  missedGapArmed;  /* 1 = already counted this overshoot */
 extern volatile uint8_t  coilFired[MAX_CYL + 1];
 
 /* Kalman RPM filter state */
@@ -176,9 +146,13 @@ extern float kf_nis_ema, kf_R_adapt, kf_q_adapt;
 extern uint8_t kf_ready;
 
 /* Sensors eng units + raw ADC */
-extern float engMap, engTps, engEct, engIat, engBat, engO2, engKnock, engPedal;
-extern float engAfr;
-extern uint16_t adcEct, adcTps, adcBat, adcIat, adcMap, adcO2, adcKnock, adcPedal;
+extern float engMap, engTps, engEct, engIat, engBat, engO2, engPedal;
+extern float engAfr, engEthanol, engVssKph;
+extern uint16_t adcEct, adcTps, adcBat, adcIat, adcMap, adcO2, adcPedal;
+extern uint16_t adcFlex;
+extern uint8_t  gFlexEnable;
+extern uint16_t gFlexAdcE0, gFlexAdcE100;
+extern float    gFlexFuelPctPer10, gFlexIgnDegPer10;
 extern volatile int16_t ignAdvanceDeg;
 extern float totalRetardDeg, softLimitRetardDeg;
 extern float advSlewDps, gIgnMinAdv, gIgnMaxAdv;
@@ -186,18 +160,22 @@ extern volatile uint16_t injPwUs, dwellActualUs, dwellTargetUs;
 
 /* Outputs / primes */
 extern uint8_t fanOn, fpOn;
-extern volatile uint8_t gFanEnable;
-extern volatile uint8_t gTachoEnable;
-extern volatile uint8_t gTachoPpr;
+extern uint8_t gTachoEnable, gTachoPpr;
+extern volatile uint8_t camPulseSeen;
+extern volatile uint8_t outTestActive, outTestStep;
+extern volatile uint32_t outTestNextMs;
 extern uint16_t gFpPrimeMs, gInjPrimeMs;
 extern uint8_t  gInjPrimeEn, injPrimeDone, injPrimeActive;
 extern uint32_t fpPrimeUntilMs, injPrimeEndMs, lastZeroRpmMs;
 extern float gFanOnC, gFanOffC;
+extern uint8_t gFanEnable;
 extern uint8_t vvt1Duty, vvt2Duty;
 
 /* Idle */
 extern uint8_t idleEnable, idleActive;
 extern float idleTargetRpm, idleThrottle, dashpotPct;
+extern float idleTgtEctBins[5];
+extern float idleTgtRpmTbl[5];
 extern float idleIntegral, idlePrevRpmErr, prevTpsIdle;
 extern uint32_t idleLastMs;
 extern float IDLE_KP, IDLE_KI, IDLE_KD;
@@ -224,24 +202,75 @@ extern float stftPct, ltftPct, STFT_MAX, LTFT_RATE, LTFT_MAX;
 extern float wbAfrMin, wbAfrMax, wbVMax, stoichAfr, targetAfr;
 extern float o2Filt, o2StuckLast;
 extern float cylTrimPct[MAX_CYL + 1];
+extern uint8_t injDisableMask;          /* bit0=cyl1 … diagnostic kill */
+extern uint8_t crankAdvEnable;
+extern float   crankAdvDeg;
+extern uint16_t crankAdvRpm;
+extern uint8_t floodClearEnable, floodClearActive;
+extern float   floodClearTps;
+#define AFR_MAP_ROWS 12
+#define AFR_MAP_COLS 22
+extern float afrMap[AFR_MAP_ROWS][AFR_MAP_COLS];
+extern uint8_t afrMapEnable;
+#define IDLE_MAP_N 5
+extern float idleFuelMap[IDLE_MAP_N][IDLE_MAP_N];  /* ECT × RPM % */
+extern float idleIgnMap[IDLE_MAP_N][IDLE_MAP_N];   /* ECT × RPM ° */
+extern const float idleRpmBins[IDLE_MAP_N];
+extern const float idleEctBins[IDLE_MAP_N];
+float idleFuelLookup(float ectC, float rpm);
+float idleIgnLookup(float ectC, float rpm);
+float afrTargetLookup(float load, float rpm);
+
 
 /* DTC */
 extern DtcSlot dtcList[DTC_MAX_ACTIVE];
 extern uint8_t dtcCount;
 extern uint32_t lastDtcEvalMs, o2StuckSameMs;
 
-/* Knock */
-extern float knkBuf[KNK_WIN_N];
-extern uint16_t knkIdx;
-extern uint8_t knkCollecting, knkEnable, knkUseTable;
-extern float knkIntensity, knkThreshold, knockRetardDeg;
-extern float knkStepDeg, knkRestoreDps, knkMaxRetard;
-extern float knkThrTbl[MS_RPM_N], knkMaxTbl[MS_RPM_N];
+
+
+/* VSS (PC15) */
+extern uint8_t  vssEnable;
+extern uint16_t vssPulsesPerKm;          /* pulses per kilometre */
+extern volatile uint32_t vssPulseCount;
+extern float    engVssKph;
+
+/* Launch VSS decay curves (fuel % add, retard ° vs vehicle speed) */
+#ifndef LC_VSS_N
+#define LC_VSS_N  8
+#endif
+extern uint8_t  launchDecayEnable;
+extern uint8_t  launchDecayActive;
+extern float    launchDecayFuelPct;      /* currently applied */
+extern float    launchDecayRetardDeg;
+extern float    launchVssBins[LC_VSS_N];
+extern float    launchFuelTbl[LC_VSS_N]; /* extra fuel % */
+extern float    launchRetardTbl[LC_VSS_N];
+float launchFuelFromVss(float kph);
+float launchRetardFromVss(float kph);
+void  serviceVss(void);
+void  ECU_Vss_IrqEdge(void);
 
 /* Boost */
 extern float boostTargetKpa, boostIntegral, boostPrevErr;
 extern uint8_t boostEnable, bstMapEnable, bstOpenLoop, boostDutyRaisesBoost;
+extern uint8_t gVeMode;
+extern float gInjFlowCcMin, gReqFuelMs;
+extern int8_t gMaxAdvDeg;   /* max advance BTDC */
+extern int8_t gMaxRetDeg;   /* max retard magnitude (ATDC) */
+extern float gMaxInjMs;     /* max injection pulse ms */
+extern float gFuelPressureBar;       /* actual rail bar */
+extern float gFuelPressureRatedBar;  /* rated flow pressure bar */
+extern uint8_t  aeEnable;
+extern float    aeTpsDotThresh, aeGain, aeMaxPct, aePctLive, aePrevTps;
+extern uint16_t aeDecayMs;
+extern uint32_t aeLastMs, aeDecayUntilMs;
+float accelEnrichMul(void);
+void  serviceAccelEnrich(void);
 extern float BOOST_KP, BOOST_KI, BOOST_KD, BOOST_MAX_KPA, BOOST_MIN_DUTY, BOOST_MAX_DUTY;
+extern float BOOST_FF_GAIN, BOOST_ARM_KPA, BOOST_I_LIM;
+extern float baroKpa, boostDutyOut;
+extern uint32_t boostLastMs;
 extern float bstMap[BST_N][BST_N];
 extern const float bstRpm[BST_N];
 extern const float bstTps[BST_N];
@@ -270,7 +299,10 @@ extern const float vvtLoadBins[VVT_MAP_N];
 extern uint8_t uploadMode, uploadRow;
 extern volatile uint8_t mapDumpBusy;
 extern volatile uint8_t savePending, mapsDirty;
+extern volatile uint32_t persistDueMs;
 extern volatile int8_t saveLastErr;
+void ECU_Persist_Touch(void);
+void ECU_Persist_Service(void);
 extern char rxBuf[192];
 extern uint8_t rxLen;
 extern char gDeviceUid[16];
@@ -300,7 +332,6 @@ extern float O2_RICH_V, O2_LEAN_V, STFT_STEP;
 /* Helpers used across modules */
 float msRetardLookup(const float *tbl, float rpm);
 uint8_t readClutch(void);
-float Goertzel_KnockIntensity(const float *x, int n, float fs, float f1, float f2);
 float afrToLambda(float afr);
 float lambdaToAfr(float lam);
 float computeIgnitionAdvance(int8_t mapAdv);
@@ -316,12 +347,6 @@ float ECU_GetCylTrim(uint8_t cyl);
 
 #ifdef __cplusplus
 }
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif
 
-extern volatile uint8_t  outTestActive;
-extern volatile uint8_t  outTestStep;
-extern volatile uint32_t outTestNextMs;
 #endif /* ECU_RUNTIME_H */

@@ -177,78 +177,19 @@ void ECU_SetCylTrim(uint8_t cyl, float pct)
 
 
 /* ---- lines 1814-2040 ---- */
-void serviceKnockGoertzel(void)
-{
-  if (!knkEnable || !syncLocked || rpmLive < 1200) {
-    /* restore any residual retard slowly when inactive */
-    if (knockRetardDeg > 0.0f) {
-      knockRetardDeg -= knkRestoreDps * 0.01f;
-      if (knockRetardDeg < 0.0f) knockRetardDeg = 0.0f;
-    }
-    knkCollecting = 0;
-    knkIdx = 0;
-    return;
-  }
-
-  /* Approximate ATDC window using crankDeg (0-360 or 0-720) */
-  float deg = crankDeg;
-  while (deg >= 360.0f) deg -= 360.0f;
-  /* Window ~15-50° ATDC */
-  uint8_t inWin = (deg >= 15.0f && deg <= 50.0f) ? 1 : 0;
-
-  if (inWin) {
-    if (!knkCollecting) {
-      knkCollecting = 1;
-      knkIdx = 0;
-    }
-    if (knkIdx < KNK_WIN_N) {
-      /* Burst-sample knock ADC to fill window (busy sample) */
-      while (knkIdx < KNK_WIN_N) {
-        uint16_t raw = readAdc(ECU_ADC_CH_KNOCK);
-        knkBuf[knkIdx++] = (float)raw;
-      }
-    }
-    if (knkIdx >= KNK_WIN_N && knkCollecting) {
-      knkIntensity = Goertzel_KnockIntensity(
-          knkBuf, KNK_WIN_N, KNK_FS_HZ, KNK_F1_HZ, KNK_F2_HZ);
-      engKnock = knkIntensity;
-
-      /* Threshold + max retard from RPM logic tables (or single values) */
-      float thr;
-      float maxR;
-      if (knkUseTable) {
-        thr = msRetardLookup(knkThrTbl, (float)rpmLive);
-        maxR = msRetardLookup(knkMaxTbl, (float)rpmLive);
-      } else {
-        thr = knkThreshold * (1.0f + (float)rpmLive / 10000.0f);
-        maxR = knkMaxRetard;
-      }
-
-      if (knkIntensity > thr) {
-        knockRetardDeg += knkStepDeg;
-        if (knockRetardDeg > maxR) knockRetardDeg = maxR;
-      } else {
-        knockRetardDeg -= knkRestoreDps * 0.02f;
-        if (knockRetardDeg < 0.0f) knockRetardDeg = 0.0f;
-      }
-      knkCollecting = 0;
-      knkIdx = 0;
-    }
-  } else {
-    knkCollecting = 0;
-    knkIdx = 0;
-  }
-}
-
 void serviceMotorsport(void)
 {
   clutchPressed = readClutch();
 
   /* Launch control: clutch in + high TPS → hold RPM + optional boost target */
-  launchActive = 0;
+  static uint8_t lcWasActive = 0;
   static uint8_t lcWasCutting = 0;
-  if (launchEnable && clutchPressed && engTps >= launchTpsMin && syncLocked) {
+  uint8_t wantLc = (launchEnable && clutchPressed && engTps >= launchTpsMin && syncLocked) ? 1 : 0;
+
+  launchActive = 0;
+  if (wantLc) {
     launchActive = 1;
+    launchDecayActive = 0;
     if ((float)rpmLive > launchRpm) {
       rpmCutActive = 1;
       lcWasCutting = 1;
@@ -262,6 +203,28 @@ void serviceMotorsport(void)
     if (lcWasCutting) {
       rpmCutActive = 0;
       lcWasCutting = 0;
+    }
+    /* Clutch released after launch → VSS-based decay of fuel/retard */
+    if (launchDecayEnable && lcWasActive && !clutchPressed) {
+      launchDecayActive = 1;
+    }
+  }
+  lcWasActive = wantLc;
+
+  if (launchDecayActive) {
+    if (!launchDecayEnable || !vssEnable || engVssKph >= launchVssBins[LC_VSS_N - 1]
+        || engTps < 15.0f) {
+      launchDecayActive = 0;
+      launchDecayFuelPct = 0.0f;
+      launchDecayRetardDeg = 0.0f;
+    } else {
+      launchDecayFuelPct = launchFuelFromVss(engVssKph);
+      launchDecayRetardDeg = launchRetardFromVss(engVssKph);
+      if (launchDecayFuelPct < 0.5f && launchDecayRetardDeg < 0.3f) {
+        launchDecayActive = 0;
+        launchDecayFuelPct = 0.0f;
+        launchDecayRetardDeg = 0.0f;
+      }
     }
   }
 
@@ -308,17 +271,35 @@ void serviceBoost(void)
 {
   if (!boostEnable || htim4.Instance == NULL) {
     __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
+    boostDutyOut = 0.0f;
     return;
   }
 
+  uint32_t now = millis();
+  float dt = 0.01f;
+  if (boostLastMs != 0) {
+    float dms = (float)(now - boostLastMs);
+    if (dms > 1.0f && dms < 200.0f)
+      dt = dms * 0.001f;
+  }
+  boostLastMs = now;
+
   float map = engMap;
+
+  /* Capture ambient when not boosting (for absolute target) */
+  if (rpmLive < 900 && engTps < 5.0f && map > 70.0f && map < 110.0f) {
+    baroKpa += 0.05f * (map - baroKpa);
+  }
+
+  /* Hard overboost cut (absolute MAP) */
   if (map > BOOST_MAX_KPA) {
     __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
     boostIntegral = 0.0f;
+    boostDutyOut = 0.0f;
     return;
   }
 
-  /* Bilinear sample of 8×8 map (rows=TPS, cols=RPM) */
+  /* Bilinear sample of 8×8 map (rows = TPS, cols = RPM) */
   float mapVal = 0.0f;
   if (bstMapEnable) {
     float rpm = (float)rpmLive, tps = engTps;
@@ -327,57 +308,100 @@ void serviceBoost(void)
     while (ri < BST_N - 2 && tps > bstTps[ri + 1]) ri++;
     float r0 = bstRpm[ci], r1 = bstRpm[ci + 1];
     float t0 = bstTps[ri], t1 = bstTps[ri + 1];
-    float cf = (r1 > r0) ? (rpm - r0) / (r1 - r0) : 0;
-    float rf = (t1 > t0) ? (tps - t0) / (t1 - t0) : 0;
-    if (cf < 0) cf = 0;
-  if (cf > 1) cf = 1;
-    if (rf < 0) rf = 0;
-  if (rf > 1) rf = 1;
-    mapVal = (1-cf)*(1-rf)*bstMap[ri][ci] + cf*(1-rf)*bstMap[ri][ci+1]
-           + (1-cf)*rf*bstMap[ri+1][ci] + cf*rf*bstMap[ri+1][ci+1];
+    float cf = (r1 > r0) ? (rpm - r0) / (r1 - r0) : 0.0f;
+    float rf = (t1 > t0) ? (tps - t0) / (t1 - t0) : 0.0f;
+    if (cf < 0.0f) cf = 0.0f;
+    if (cf > 1.0f) cf = 1.0f;
+    if (rf < 0.0f) rf = 0.0f;
+    if (rf > 1.0f) rf = 1.0f;
+    mapVal = (1.0f - cf) * (1.0f - rf) * bstMap[ri][ci]
+           + cf * (1.0f - rf) * bstMap[ri][ci + 1]
+           + (1.0f - cf) * rf * bstMap[ri + 1][ci]
+           + cf * rf * bstMap[ri + 1][ci + 1];
   }
 
+  /* Off-throttle / low RPM: close solenoid, decay integrator */
   if (engTps < 15.0f || rpmLive < 1500) {
     __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
-    boostIntegral *= 0.95f;
+    boostIntegral *= 0.90f;
+    boostPrevErr = 0.0f;
+    boostDutyOut = 0.0f;
     return;
   }
 
   float duty = 0.0f;
 
   if (bstOpenLoop) {
-    /* Open-loop: map cells are solenoid duty % (0-100) */
+    /* -------- Open-loop: cells are solenoid duty % -------- */
     duty = mapVal;
     if (boostTargetKpa > 0.5f && boostTargetKpa <= 100.0f)
-      duty = boostTargetKpa; /* optional single % override via SET:BOOST */
+      duty = boostTargetKpa; /* SET:BOOST single % override */
   } else {
-    /* Closed-loop: map cells are gauge kPa targets */
+    /* -------- Closed-loop: feedforward + PID --------
+     * Cells = gauge kPa target. Feedforward estimates base duty
+     * from target; PID trims residual error once near target.
+     */
     float tgtGauge = bstMapEnable ? mapVal : boostTargetKpa;
     if (boostTargetKpa > tgtGauge)
-      tgtGauge = boostTargetKpa;
+      tgtGauge = boostTargetKpa; /* launch / SET:BOOST can raise target */
+
     if (tgtGauge < 5.0f) {
       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0);
-      boostIntegral *= 0.95f;
+      boostIntegral *= 0.90f;
+      boostDutyOut = 0.0f;
       return;
     }
-    float atm = 100.0f;
+
+    float atm = baroKpa;
+    if (atm < 70.0f) atm = 70.0f;
+    if (atm > 110.0f) atm = 110.0f;
     float targetAbs = atm + tgtGauge;
-    float err = targetAbs - map;
-    boostIntegral += err * 0.01f;
-    if (boostIntegral > 50.0f) boostIntegral = 50.0f;
-    if (boostIntegral < -50.0f) boostIntegral = -50.0f;
-    float deriv = err - boostPrevErr;
-    boostPrevErr = err;
-    float u = BOOST_KP * err + BOOST_KI * boostIntegral + BOOST_KD * deriv;
-    duty = u;
+    float err = targetAbs - map; /* +err = need more boost */
+
+    /* Feedforward: linear duty from gauge target (tunable gain) */
+    float duty_ff = tgtGauge * BOOST_FF_GAIN;
+    if (duty_ff < BOOST_MIN_DUTY) duty_ff = BOOST_MIN_DUTY;
+    if (duty_ff > BOOST_MAX_DUTY) duty_ff = BOOST_MAX_DUTY;
+
+    float abs_err = (err >= 0.0f) ? err : -err;
+    float u_pid = 0.0f;
+
+    if (abs_err > BOOST_ARM_KPA) {
+      /* Far from target (typically still spooling): FF only, decay I
+       * Optional mild P so large lag still pulls duty up without windup.
+       */
+      boostIntegral *= 0.92f;
+      u_pid = BOOST_KP * 0.35f * err;
+      boostPrevErr = err;
+    } else {
+      /* Near target: full PID on residual */
+      boostIntegral += err * dt;
+      if (boostIntegral > BOOST_I_LIM) boostIntegral = BOOST_I_LIM;
+      if (boostIntegral < -BOOST_I_LIM) boostIntegral = -BOOST_I_LIM;
+
+      /* Anti-windup: freeze I when saturated against the error sign */
+      float trial = duty_ff + BOOST_KP * err + BOOST_KI * boostIntegral;
+      if ((trial >= BOOST_MAX_DUTY && err > 0.0f) ||
+          (trial <= BOOST_MIN_DUTY && err < 0.0f)) {
+        boostIntegral -= err * dt; /* undo last integrate */
+      }
+
+      float deriv = (err - boostPrevErr) / dt;
+      boostPrevErr = err;
+      u_pid = BOOST_KP * err + BOOST_KI * boostIntegral + BOOST_KD * deriv;
+    }
+
+    duty = duty_ff + u_pid;
     if (!boostDutyRaisesBoost)
-      duty = -duty;
+      duty = (duty_ff - u_pid); /* inverted solenoid polarity */
   }
 
   if (duty < BOOST_MIN_DUTY) duty = BOOST_MIN_DUTY;
   if (duty > BOOST_MAX_DUTY) duty = BOOST_MAX_DUTY;
-  if (duty < 0) duty = 0;
-  if (duty > 100) duty = 100;
+  if (duty < 0.0f) duty = 0.0f;
+  if (duty > 100.0f) duty = 100.0f;
+
+  boostDutyOut = duty;
 
   uint32_t ccr = (uint32_t)((duty * 1000.0f) / 100.0f);
   if (ccr > 1000U) ccr = 1000U;

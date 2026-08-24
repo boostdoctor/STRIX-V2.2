@@ -58,16 +58,17 @@ TEMP_SENSORS = [
 
 O2_MODES = ("Disabled", "Narrowband", "Wideband")
 
-# Crank wheel profiles (id, name, teeth, missing) — matches STRIX V1 / ecu_wheels.h
+# Crank wheel profiles (id, name, teeth, missing) — matches ecu_wheels.c
 WHEEL_PROFILES = [
-    (6,  "36-1", 36, 1),
-    (3,  "60-2", 60, 2),
-    (4,  "60-2 + cam", 60, 2),
-    (5,  "60-2 + halfmoon", 60, 2),
-    (1,  "12-1", 12, 1),
-    (2,  "24-1", 24, 1),
+    (9,  "60-2+cam", 60, 2),   # default
+    (8,  "60-2", 60, 2),
+    (11, "36-2+cam", 36, 2),
     (7,  "36-2", 36, 2),
-    (28, "36-1 + 2nd trig", 36, 1),
+    (5,  "36-1+cam", 36, 1),
+    (6,  "36-1", 36, 1),
+    (2,  "24-1", 24, 1),
+    (1,  "12-1", 12, 1),
+    (10, "60-2+dual", 60, 2),
     (0,  "Custom", 36, 1),
 ]
 
@@ -157,20 +158,73 @@ QHeaderView::section {
 
 
 def suggested_ve_map(rows: int = ROWS, cols: int = COLS) -> list[list[float]]:
-    """Reasonable VE % base map (load × RPM). Peak ~ mid-RPM / high load."""
+    """NA pump-gas VE % base map (load × RPM).
+
+    Idle ~58–65 %, peak torque ~95–100 % near mid-RPM / high load,
+    mild high-RPM taper. No boost fill.
+    """
     out = []
     for r in range(rows):
-        # load fraction 0 (light) → 1 (full)
+        lf = r / max(1, rows - 1)          # 0 light → 1 full
+        row = []
+        for c in range(cols):
+            rf = c / max(1, cols - 1)      # 0 low → 1 high RPM
+            # idle / light: 58; build with load; peak torque band ~0.35–0.55 RPM frac
+            peak = 1.0 - abs(rf - 0.42) * 1.6
+            if peak < 0.0:
+                peak = 0.0
+            ve = 58.0 + lf * 32.0 + peak * 12.0
+            # high RPM volumetric drop
+            if rf > 0.70:
+                ve -= (rf - 0.70) * 18.0
+            # light-load high-RPM leaner fill
+            if lf < 0.25 and rf > 0.5:
+                ve -= 4.0
+            ve = max(45.0, min(102.0, ve))
+            row.append(round(ve, 1))
+        out.append(row)
+    return out
+
+
+def suggested_afr_map(rows: int = ROWS, cols: int = COLS) -> list[list[float]]:
+    """NA target AFR: stoich cruise, richer WOT."""
+    out = []
+    for r in range(rows):
         lf = r / max(1, rows - 1)
         row = []
         for c in range(cols):
             rf = c / max(1, cols - 1)
-            # base 55% idle-ish → 100% peak torque area → slight drop at high RPM
-            ve = 55.0 + lf * 40.0 + rf * 12.0 - abs(rf - 0.55) * 18.0
-            if lf > 0.85 and rf > 0.7:
-                ve -= 5.0  # slight high-load high-rpm taper
-            ve = max(40.0, min(110.0, ve))
-            row.append(round(ve, 1))
+            afr = 14.7 - lf * 1.8 - max(0.0, rf - 0.6) * 0.6
+            if lf < 0.3:
+                afr = 14.7 + (0.3 - lf) * 0.5  # slight lean idle/cruise
+            afr = max(11.8, min(15.2, afr))
+            row.append(round(afr, 1))
+        out.append(row)
+    return out
+
+
+def suggested_idle_fuel_map() -> list[list[float]]:
+    """5×5 idle fuel correction % (ECT × RPM). Slight cold add."""
+    ect_f = [0, 0.25, 0.5, 0.75, 1.0]
+    out = []
+    for ei in range(5):
+        row = []
+        for ri in range(5):
+            # cold rows richer
+            pct = (1.0 - ect_f[ei]) * 12.0 - ri * 0.5
+            row.append(round(max(0.0, pct), 1))
+        out.append(row)
+    return out
+
+
+def suggested_idle_ign_map() -> list[list[float]]:
+    """5×5 idle ign correction ° (ECT × RPM)."""
+    out = []
+    for ei in range(5):
+        row = []
+        for ri in range(5):
+            deg = (1.0 - ei / 4.0) * 4.0 + ri * 0.5
+            row.append(round(deg, 1))
         out.append(row)
     return out
 

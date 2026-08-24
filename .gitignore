@@ -1,14 +1,35 @@
+# Python
 __pycache__/
-*.pyc
-.pytest_cache/
-*.o
-*.elf
-*.map
-*.list
-Debug/
-Release/
-.settings/
-.metadata/
-*.bak
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+*.tcal
+strix_settings.json
+device_id.json
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
 .DS_Store
-~$*
+Thumbs.db
+
+# Build artifacts
+STRIX_V2/STRIX_V2/Debug/
+STRIX_V2/STRIX_V2/Release/
+STRIX_V2/STRIX_V2/*.elf
+STRIX_V2/STRIX_V2/*.bin
+STRIX_V2/STRIX_V2/*.hex
+STRIX_V2/STRIX_V2/*.map
+STRIX_V2/STRIX_V2/*.list
+STRIX_V2/STRIX_V2/*.o
+STRIX_V2/STRIX_V2/*.su
+STRIX_V2/STRIX_V2/*.cyclo
+*.zip
+*.bak
+
+# Local agent / scratch
+.grok/
+.previewdocs/

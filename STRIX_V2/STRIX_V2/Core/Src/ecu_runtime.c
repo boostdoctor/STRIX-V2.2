@@ -51,8 +51,8 @@ float   baseInjMs  = 0;   /* map only, pre-trim */
 uint8_t sensorPhase = 0;
 
 
-volatile uint8_t  gTeeth = 60;
-volatile uint8_t  gMissing = 2;
+volatile uint8_t  gTeeth = CFG_TEETH;
+volatile uint8_t  gMissing = CFG_MISSING;
 volatile uint16_t gTrigAngle = CFG_TRIG_ANGLE;
 volatile uint16_t gRpmLimit = CFG_RPM_LIMIT;
 volatile uint8_t  gRpmCutMode = 0; /* 0=hard cut, 1=soft cut */
@@ -77,6 +77,12 @@ volatile uint8_t  gCoilSmart = 1;  /* 1=smart 0=dumb */
 volatile uint8_t  gDbwEnable = 1;  /* 0=idle actuator only */
 volatile uint8_t  gIdleOutMode = 0; /* 0=2wire 1=1wire 2=stepper */
 volatile uint8_t  gFireOrder = 0;  /* 0=1-3-4-2 1=1-2-4-3 2=1-3-2-4 */
+uint8_t gTachoEnable = 0;
+uint8_t gTachoPpr = 2;
+volatile uint8_t camPulseSeen = 0;
+volatile uint8_t outTestActive = 0;
+volatile uint8_t outTestStep = 0;
+volatile uint32_t outTestNextMs = 0;
 /* BAT_CAL_N / MAP_CAL_N / CSE_N from ecu_runtime.h */
 float batVoltTbl[BAT_CAL_N];
 float batAdcTbl[BAT_CAL_N];
@@ -96,9 +102,18 @@ uint32_t aseStartMs = 0;
 uint8_t  aseActive  = 0;
 uint8_t  wasRunning = 0;
 /* Injection mode: 0=AUTO 1=BATCH 2=SEQUENTIAL 3=HYBRID (seq below RPM, batch above) */
-volatile uint8_t  gInjMode = 1; /* 1=batch 2=seq 3=hybrid */
-volatile uint8_t  gIgnMode = 0; /* 0=wasted spark 1=sequential */
+volatile uint8_t  gInjMode = 1;          /* default batch */
+volatile uint8_t  gIgnMode = 0;          /* default wasted spark */
+volatile uint8_t  gCoilType = 0;
+volatile uint8_t  gCoilChargeMode = 0;
 volatile uint16_t gBatchAboveRpm = 3000; /* hybrid switch point */
+uint16_t adcFlex = 0;
+float    engEthanol = 0.0f;
+uint8_t  gFlexEnable = 0;
+uint16_t gFlexAdcE0 = 410;
+uint16_t gFlexAdcE100 = 3686;
+float    gFlexFuelPctPer10 = 4.7f;
+float    gFlexIgnDegPer10 = 0.8f;
 
 /* Crank / cam */
 volatile uint32_t lastToothUs = 0, lastGapUs = 0;
@@ -140,24 +155,28 @@ volatile uint8_t  camUnlockMiss = 0;   /* hysteresis to unlock */
 volatile uint8_t  cam2LockHits = 0;
 volatile uint8_t  cam2UnlockMiss = 0;
 volatile uint16_t rpmLive = 0;
-uint8_t gWheelId = 9; /* default 60-2 + 1-tooth cam */ /* default 60-2 + 1-tooth cam */
+uint8_t gWheelId = 9; /* default 60-2+cam */
 volatile uint8_t mapDumpBusy = 0;
-uint8_t gCamMode = 1; /* cam sensor present */ /* cam sensor present (60-2+cam); sequential still needs gIgnMode */
+uint8_t gCamMode = 0;
 
 /* Bulk-upload state (UPLOAD:ADV / UPLOAD:INJ from tuner) */
 uint8_t uploadMode = 0;   /* 0=idle  1=ADV  2=INJ */
 volatile uint8_t savePending = 0; /* 1 = do flash in ECU_Loop */
 volatile uint8_t mapsDirty  = 0; /* RAM maps changed since load/save */
+volatile uint32_t persistDueMs = 0;
 volatile int8_t  saveLastErr = 0;
 
 uint8_t uploadRow  = 0;
 volatile uint32_t crankEdgeCount = 0;
 volatile float    crankDeg = 0.0f;   /* 0..720 when sequential */
 volatile uint8_t  cycleHalf = 0;     /* 0 or 1 from cam */
+volatile uint8_t  crankPllState = 0; /* CRANK_PLL_SEEK */
 volatile uint8_t  pllSoftErr = 0, pllGoodStreak = 0;
 volatile uint8_t  gapConfirm = 0;
 volatile uint16_t teethSinceGap = 0; /* physical teeth since last gap */
 volatile uint8_t  gapRejectStreak = 0;
+volatile uint8_t  missedGapStreak = 0;
+volatile uint8_t  missedGapArmed = 0;
 
 volatile int16_t  ignAdvanceDeg = 10; /* signed: negative = ATDC */
 float softLimitRetardDeg = 0.0f;
@@ -184,10 +203,6 @@ uint8_t  injOn[MAX_CYL+1];
 uint32_t injEndUs[MAX_CYL+1];
 
 uint8_t fanOn = 0, fpOn = 0;
-volatile uint8_t gFanEnable = 0; /* IO must enable fan */
-volatile uint8_t gTachoEnable = 0;
-volatile uint8_t gTachoPpr = 2; /* pulses per crank rev */
-/* tacho edge state lives in service path */
 /* Fuel-pump prime (ms after power-up or SET:FPPRIME) */
 uint16_t gFpPrimeMs = 2000;
 uint32_t fpPrimeUntilMs = 0;
@@ -200,6 +215,7 @@ uint8_t  injPrimeActive = 0;
 uint32_t lastZeroRpmMs = 0;
 float gFanOnC  = 95.0f;
 float gFanOffC = 90.0f; /* hysteresis: off below on-hyst */
+uint8_t gFanEnable = 1; /* 0 = fan output forced off */
 /* VVT duty 0-100% via TIM1 PWM (period 1000 counts) */
 uint8_t vvt1Duty = 0, vvt2Duty = 0;
 extern TIM_HandleTypeDef htim1;
@@ -214,23 +230,49 @@ float ETB_KI = 8.0f;
 float ETB_KD = 0.05f;
 float ETB_IDLE_PCT = 3.0f;  /* min open when running */
 
-float engMap, engTps, engEct, engIat, engBat, engO2, engKnock, engPedal;
-/* Goertzel knock */
-#define KNK_WIN_N     64
-#define KNK_FS_HZ     50000.0f
-#define KNK_F1_HZ     7000.0f
-#define KNK_F2_HZ     10000.0f
-float    knkBuf[KNK_WIN_N];
-uint16_t knkIdx = 0;
-uint8_t  knkCollecting = 0;
-float    knkIntensity = 0.0f;
-float    knkThreshold = 50.0f;  /* scale depends on sensor gain */
-float    knockRetardDeg = 0.0f;
-float    knkStepDeg = 2.0f;
-float    knkRestoreDps = 5.0f;  /* degrees per second restore */
-float    knkMaxRetard = 12.0f;
-uint8_t  knkEnable = 1;
-uint16_t adcMap, adcTps, adcEct, adcIat, adcBat, adcO2, adcKnock, adcPedal;
+float engMap, engTps, engEct, engIat, engBat, engO2, engPedal;
+uint16_t adcMap, adcTps, adcEct, adcIat, adcBat, adcO2, adcPedal;
+
+/* Injector diagnostic mask + startup */
+uint8_t  injDisableMask = 0;
+uint8_t  crankAdvEnable = 1;
+float    crankAdvDeg = 10.0f;
+uint16_t crankAdvRpm = 400;
+uint8_t  floodClearEnable = 1;
+uint8_t  floodClearActive = 0;
+float    floodClearTps = 85.0f;
+
+/* VSS PC15 */
+uint8_t  vssEnable = 0;
+uint16_t vssPulsesPerKm = 8000;   /* ~ typical ABS tone-ring scale */
+volatile uint32_t vssPulseCount = 0;
+float    engVssKph = 0.0f;
+
+/* Launch VSS decay: full correction at 0 kph → 0 at end of table */
+uint8_t  launchDecayEnable = 0;
+uint8_t  launchDecayActive = 0;
+float    launchDecayFuelPct = 0.0f;
+float    launchDecayRetardDeg = 0.0f;
+float    launchVssBins[LC_VSS_N] = {0, 20, 40, 60, 80, 100, 130, 160};
+float    launchFuelTbl[LC_VSS_N] = {25, 20, 14, 8, 4, 2, 0, 0};   /* % extra */
+float    launchRetardTbl[LC_VSS_N] = {15, 12, 8, 5, 2, 0, 0, 0};  /* ° retard */
+
+
+
+/* AFR target map 12×22 (wideband CL) */
+float afrMap[AFR_MAP_ROWS][AFR_MAP_COLS];
+uint8_t afrMapEnable = 0;
+/* afrMap cells filled on first SET:AFR / connect; default targetAfr used until then */
+
+/* Idle 5×5 fuel/ign correction (ECT × RPM) */
+const float idleRpmBins[IDLE_MAP_N] = {600, 750, 900, 1050, 1200};
+const float idleEctBins[IDLE_MAP_N] = {-10, 20, 40, 60, 80};
+float idleFuelMap[IDLE_MAP_N][IDLE_MAP_N] = {
+  {12,11,10,9,8}, {8,7,6,5,4}, {4,3,2,1,0}, {1,0,0,0,0}, {0,0,0,0,0}
+};
+float idleIgnMap[IDLE_MAP_N][IDLE_MAP_N] = {
+  {4,4.5,5,5.5,6}, {3,3.5,4,4.5,5}, {2,2.5,3,3.5,4}, {1,1.5,2,2.5,3}, {0,0.5,1,1.5,2}
+};
 /* TPS / pedal endpoint calibration (12-bit ADC) */
 uint16_t tpsClosedAdc  = 400;
 uint16_t tpsOpenAdc    = 3600;
@@ -269,6 +311,12 @@ float BOOST_KD = 0.02f;
 float BOOST_MAX_KPA = 250.0f;  /* absolute MAP safety (includes atm) */
 float BOOST_MIN_DUTY = 0.0f;
 float BOOST_MAX_DUTY = 85.0f;  /* leave headroom */
+float BOOST_FF_GAIN = 0.45f;   /* % duty per gauge-kPa of target (feedforward) */
+float BOOST_ARM_KPA = 35.0f;   /* PID fully armed when |err| within this (kPa) */
+float BOOST_I_LIM = 40.0f;     /* integral clamp (duty-equivalent units) */
+float baroKpa = 100.0f;        /* captured at key-on / idle */
+float boostDutyOut = 0.0f;     /* last commanded duty % (telemetry) */
+uint32_t boostLastMs = 0;
 /* 1 = more duty raises boost (vent WG top); 0 = inverted */
 uint8_t boostDutyRaisesBoost = 1;
 float bstMap[BST_N][BST_N]; /* gauge kPa target, RPM×TPS */
@@ -276,6 +324,23 @@ const float bstRpm[BST_N] = {1500,2000,2500,3000,3500,4000,5000,6000};
 const float bstTps[BST_N] = {20,30,40,50,60,70,80,100};
 uint8_t bstMapEnable = 1;
 uint8_t bstOpenLoop = 0; /* 0=CL target kPa  1=OL duty % */
+uint8_t gVeMode = 0; /* 1 = fuel map cells are VE % */
+float gInjFlowCcMin = 220.0f; /* injector flow cc/min @ rated pressure */
+float gReqFuelMs = 2.5f; /* ms at 100% VE, 100 kPa, 20 C */
+float gFuelPressureBar = 3.0f;
+float gFuelPressureRatedBar = 3.0f;
+
+/* Acceleration enrichment (TPS-dot tip-in) */
+uint8_t  aeEnable = 1;
+float    aeTpsDotThresh = 20.0f; /* %/s */
+float    aeGain = 1.5f;          /* % fuel per %/s above thresh */
+float    aeMaxPct = 40.0f;
+uint16_t aeDecayMs = 400;
+float    aePctLive = 0.0f;
+float    aePrevTps = 0.0f;
+uint32_t aeLastMs = 0;
+uint32_t aeDecayUntilMs = 0;
+
 /* Launch / ALS / Flat-foot */
 uint8_t  launchEnable = 0;
 float    launchRpm = 4000.0f;
@@ -292,9 +357,6 @@ float ffsRetardTbl[MS_RPM_N] = {12,14,16,18,20,22,22,20};
 float alsFuelTbl[MS_RPM_N] = {25,30,35,40,45,50,50,45};
 float alsFuelPct = 40.0f; /* fallback single value */
 uint8_t alsFuelUseTable = 1;
-float knkThrTbl[MS_RPM_N] = {40,45,50,55,60,70,80,90};
-float knkMaxTbl[MS_RPM_N] = {8,10,12,12,14,14,12,10};
-uint8_t knkUseTable = 1;
 uint8_t alsUseTable = 1;
 uint8_t ffsUseTable = 1;
 uint8_t  alsActive = 0;
@@ -368,7 +430,7 @@ float DASHPOT_MAX     = 25.0f;
 float DASHPOT_MIN_DTPS = 6.0f;   /* min TPS drop % to trigger */
 float DASHPOT_MIN_TPS  = 12.0f;  /* only if TPS was above this */
 
-/* idleTargetFromEct() lives in ecu_idle.c */
+/* idleTargetFromEct + idleTgt* tables live in ecu_idle.c */
 
 /* ── Deceleration fuel cut (DFCO) ───────────────────────────────
  * Cut fuel when coasting: high RPM, closed throttle/pedal, warm.
@@ -395,29 +457,130 @@ const float vvtLoadBins[VVT_MAP_N] = {
 /* Helpers (msRetardLookup, readClutch, o2FuelMul, computeIgnitionAdvance)
  * live in ecu_fuel.c — do not redefine here. */
 
-/** Lightweight dual-tone energy estimate (full Goertzel optional later) */
-float Goertzel_KnockIntensity(const float *x, int n, float fs, float f1, float f2)
+
+int8_t gMaxAdvDeg = 40;
+int8_t gMaxRetDeg = 10;
+float gMaxInjMs = 15.0f;
+
+
+static float _bilerp5(const float map[IDLE_MAP_N][IDLE_MAP_N],
+                      const float rowBins[IDLE_MAP_N],
+                      const float colBins[IDLE_MAP_N],
+                      float rowV, float colV)
 {
-  (void)fs;
-  (void)f1;
-  (void)f2;
-  if (!x || n < 4) return 0.0f;
-  float sum = 0.0f, mean = 0.0f;
-  for (int i = 0; i < n; i++) mean += x[i];
-  mean /= (float)n;
-  for (int i = 0; i < n; i++) {
-    float d = x[i] - mean;
-    sum += d * d;
-  }
-  return sum / (float)n;
+  int r0 = 0, c0 = 0;
+  while (r0 < IDLE_MAP_N - 2 && rowV > rowBins[r0 + 1]) r0++;
+  while (c0 < IDLE_MAP_N - 2 && colV > colBins[c0 + 1]) c0++;
+  float r1 = rowBins[r0], r2 = rowBins[r0 + 1];
+  float c1 = colBins[c0], c2 = colBins[c0 + 1];
+  float fr = (r2 > r1) ? (rowV - r1) / (r2 - r1) : 0.0f;
+  float fc = (c2 > c1) ? (colV - c1) / (c2 - c1) : 0.0f;
+  if (fr < 0) fr = 0;
+  if (fr > 1) fr = 1;
+  if (fc < 0) fc = 0;
+  if (fc > 1) fc = 1;
+  float v00 = map[r0][c0], v01 = map[r0][c0 + 1];
+  float v10 = map[r0 + 1][c0], v11 = map[r0 + 1][c0 + 1];
+  float a = v00 + (v01 - v00) * fc;
+  float b = v10 + (v11 - v10) * fc;
+  return a + (b - a) * fr;
 }
 
-/* Output test sequencer (RPM must be 0) */
-volatile uint8_t  outTestActive = 0;
-volatile uint8_t  outTestStep = 0;
-volatile uint32_t outTestNextMs = 0;
+float idleFuelLookup(float ectC, float rpm)
+{
+  return _bilerp5(idleFuelMap, idleEctBins, idleRpmBins, ectC, rpm);
+}
 
-volatile uint8_t camPulseSeen = 0;
+float idleIgnLookup(float ectC, float rpm)
+{
+  return _bilerp5(idleIgnMap, idleEctBins, idleRpmBins, ectC, rpm);
+}
 
-volatile uint8_t gCoilChargeMode = 0; /* 0=duty (smart default) 1=time */
-volatile uint8_t gCoilType = 0; /* 0=smart */
+float afrTargetLookup(float load, float rpm)
+{
+  if (!afrMapEnable) return targetAfr;
+  /* load axis = MAP kPa approx 20..240 over 12 rows; RPM 250..8125 over 22 cols */
+  float rmax = 11.0f, cmax = 21.0f;
+  float rf = (load - 20.0f) / (240.0f - 20.0f) * rmax;
+  float cf = (rpm - 250.0f) / (8125.0f - 250.0f) * cmax;
+  if (rf < 0) rf = 0;
+  if (rf > rmax) rf = rmax;
+  if (cf < 0) cf = 0;
+  if (cf > cmax) cf = cmax;
+  int r0 = (int)rf; if (r0 > 10) r0 = 10;
+  int c0 = (int)cf; if (c0 > 20) c0 = 20;
+  float fr = rf - (float)r0;
+  float fc = cf - (float)c0;
+  float v00 = afrMap[r0][c0], v01 = afrMap[r0][c0 + 1];
+  float v10 = afrMap[r0 + 1][c0], v11 = afrMap[r0 + 1][c0 + 1];
+  float a = v00 + (v01 - v00) * fc;
+  float b = v10 + (v11 - v10) * fc;
+  return a + (b - a) * fr;
+}
+
+
+float _lerp_tbl(const float *xs, const float *ys, int n, float x)
+{
+  if (x <= xs[0]) return ys[0];
+  if (x >= xs[n - 1]) return ys[n - 1];
+  int i = 0;
+  while (i < n - 2 && x > xs[i + 1]) i++;
+  float x0 = xs[i], x1 = xs[i + 1];
+  float f = (x1 > x0) ? (x - x0) / (x1 - x0) : 0.0f;
+  if (f < 0) f = 0;
+  if (f > 1) f = 1;
+  return ys[i] * (1.0f - f) + ys[i + 1] * f;
+}
+
+float launchFuelFromVss(float kph)
+{
+  return _lerp_tbl(launchVssBins, launchFuelTbl, LC_VSS_N, kph);
+}
+
+float launchRetardFromVss(float kph)
+{
+  return _lerp_tbl(launchVssBins, launchRetardTbl, LC_VSS_N, kph);
+}
+
+void ECU_Vss_IrqEdge(void)
+{
+  vssPulseCount++;
+}
+
+void serviceVss(void)
+{
+  static uint32_t lastMs;
+  static uint32_t lastCount;
+  static uint8_t lastLevel = 1;
+  uint32_t now = HAL_GetTick();
+  if (!vssEnable) {
+    engVssKph = 0.0f;
+    return;
+  }
+  /* Software edge fallback if EXTI not wired: sample PC15 */
+  {
+    GPIO_PinState s = HAL_GPIO_ReadPin(VSS_GPIO_Port, VSS_Pin);
+    if ((uint8_t)s != lastLevel) {
+      lastLevel = (uint8_t)s;
+      if (s == GPIO_PIN_SET)
+        vssPulseCount++;
+    }
+  }
+  if (lastMs == 0) {
+    lastMs = now;
+    lastCount = vssPulseCount;
+    return;
+  }
+  uint32_t dt = now - lastMs;
+  if (dt < 100u) return; /* 10 Hz update */
+  uint32_t c = vssPulseCount;
+  uint32_t d = c - lastCount;
+  lastCount = c;
+  lastMs = now;
+  if (vssPulsesPerKm < 100) vssPulsesPerKm = 100;
+  /* kph = (pulses / dt_s) / (ppk) * 3600 */
+  float pps = (float)d * 1000.0f / (float)dt;
+  engVssKph = pps * 3600.0f / (float)vssPulsesPerKm;
+  if (engVssKph < 0.5f) engVssKph = 0.0f;
+  if (engVssKph > 350.0f) engVssKph = 350.0f;
+}

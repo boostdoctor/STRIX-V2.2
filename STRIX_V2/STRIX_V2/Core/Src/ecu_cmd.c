@@ -34,22 +34,32 @@ void sendTelemetry(void) {
   unsigned pw_us = (unsigned)injPwUs;
   int ign_d = (int)ignAdvanceDeg;
 
+  /* Guarantee RPM field tracks period even if loop stalled Kalman at 0 */
+  {
+    uint16_t rpm_tx = rpmLive;
+    if (rpm_tx < 30 && toothPeriodUs >= 40 && gTeeth >= 2) {
+      float z = 60000000.0f / ((float)toothPeriodUs * (float)gTeeth);
+      if (z >= 30.0f && z < 15000.0f)
+        rpm_tx = (uint16_t)(z + 0.5f);
+    }
+    rpmLive = rpm_tx; /* keep UI and internal state aligned */
+  }
+
   int n = snprintf(b, sizeof b,
-    "RPM:%u,PW:%.2f,INJ:%.2f,IGN:%d,TRET:%.1f,MAP:%.0f,TPS:%.0f,TMP:%.0f,IAT:%.0f,BAT:%.1f,"
+    "RPM:%u,PW:%.2f,INJ:%.2f,IGN:%d,TRET:%.1f,MAP:%.0f,TPS:%.0f,TMP:%.0f,IAT:%.0f,BAT:%.1f,VSS:%.1f,"
     "EADC:%u,TADC:%u,BADC:%u,IADC:%u,MADC:%u,"
     "SYNC:%u,CAM:%u,CAM2:%u,FAN:%u,FP:%u,LOST:%u,"
-    "TOOTH:%u,EDGE:%u,CRK:%u,DEG:%.0f,TERR:%u,DWELL:%u,CYL:%u\r\n",
+    "TOOTH:%u,DEG:%.0f,TERR:%u,DWELL:%u,CYL:%u\r\n",
     (unsigned)rpmLive,
     (double)(pw_us * 0.001f), (double)(pw_us * 0.001f), ign_d,
     (double)totalRetardDeg,
     (double)engMap, (double)engTps, (double)engEct, (double)engIat, (double)engBat,
+    (double)engVssKph,
     (unsigned)adcEct, (unsigned)adcTps, (unsigned)adcBat,
     (unsigned)adcIat, (unsigned)adcMap,
-    (unsigned)syncLocked, (unsigned)(camSynced || camPulseSeen), (unsigned)cam2Synced,
+    (unsigned)syncLocked, (unsigned)camSynced, (unsigned)cam2Synced,
     (unsigned)fanOn, (unsigned)fpOn, (unsigned)syncLosses,
     (unsigned)(syncLocked ? toothIndex : (crankEdgeCount & 0xFFFFu)),
-    (unsigned)(crankEdgeCount & 0xFFFFu),
-    (unsigned)HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0),
     (double)crankDeg, (unsigned)toothErrors,
     (unsigned)dwellActualUs, (unsigned)gCyl);
   if (n > 0)
@@ -62,14 +72,14 @@ void sendTelemetry(void) {
               : alsFuelPct;
 
   n = snprintf(b, sizeof b,
-    "AFR:%.2f,LAM:%.3f,MCELL:%u:%u,BASEIGN:%d,BASEINJ:%u,O2:%.2f,KNK:%.1f,KRET:%.1f,STFT:%.1f,LTFT:%.1f,TTRIM:%.1f,CL:%u,LOAD:%.2f,SYNCQ:%u,"
+    "AFR:%.2f,LAM:%.3f,MCELL:%u:%u,BASEIGN:%d,BASEINJ:%u,O2:%.2f,STFT:%.1f,LTFT:%.1f,TTRIM:%.1f,CL:%u,LOAD:%.2f,SYNCQ:%u,"
     "PWUS:%u,INJMODE:%u,SEQ:%u,BATCHRPM:%u,IDLE:%u,IRPM:%.0f,ITHR:%.1f,DASH:%.1f,"
     "DFCO:%u,OFC:%u,VVT1:%u,VVT2:%u,C1PH:%.0f,C2PH:%.0f,ASE:%u,CLTCH:%u,"
-    "LC:%u,ALS:%u,ALSTO:%u,ALSF:%.0f,FFS:%u\r\n",
+    "LC:%u,ALS:%u,ALSTO:%u,ALSF:%.0f,FFS:%u,INJMSK:%u,FLOOD:%u,LCD:%u,LCF:%.1f,LCR:%.1f\r\n",
     (double)engAfr, (double)afrToLambda(engAfr),
     (unsigned)mapCellR, (unsigned)mapCellC,
     (int)baseAdvDeg, (unsigned)(baseInjMs * 10.0f + 0.5f),
-    (double)engO2, (double)engKnock, (double)knockRetardDeg,
+    (double)engO2,
     (double)stftPct, (double)ltftPct, (double)totalTrimPct(),
     (unsigned)o2ClActive, (double)engLoad, (unsigned)syncQualityPct(),
     pw_us, (unsigned)gInjMode, (unsigned)injSequentialActive(),
@@ -81,7 +91,9 @@ void sendTelemetry(void) {
     (double)cam1PhaseDeg, (double)cam2PhaseDeg, (unsigned)aseActive,
     (unsigned)clutchPressed, (unsigned)launchActive,
     (unsigned)alsActive, (unsigned)alsTimedOut,
-    (double)als_f, (unsigned)ffsActive);
+    (double)als_f, (unsigned)ffsActive,
+    (unsigned)injDisableMask, (unsigned)floodClearActive,
+    (unsigned)launchDecayActive, (double)launchDecayFuelPct, (double)launchDecayRetardDeg);
   if (n > 0)
     uartWrite(b);
 }
@@ -137,7 +149,7 @@ void ECU_Settings_Pack(EcuFlashSettings *out)
   out->ignMode = gIgnMode;
   out->coilType = gCoilType;
   out->coilChargeMode = gCoilChargeMode;
-  out->camModeP1 = (uint8_t)(gCamMode ? 2u : 1u);
+  out->camModeP1 = gCamMode ? 2u : 1u;
   out->batchAboveRpm = gBatchAboveRpm;
   out->coilSmart = gCoilSmart;
   out->cylinders = gCyl;
@@ -151,7 +163,7 @@ void ECU_Settings_Pack(EcuFlashSettings *out)
   out->injPrimeEn = gInjPrimeEn;
   out->rpmLimit = gRpmLimit;
   out->rpmCutMode = gRpmCutMode;
-  out->fanEnable = (gFanOnC < 150.0f) ? 1u : 0u;
+  out->fanEnable = gFanEnable ? 1u : 0u;
   out->fanOnC = (uint8_t)gFanOnC;
   out->o2Mode = o2SensorMode;
   out->vvtMode = vvtClEnable ? 1u : 0u;
@@ -161,6 +173,13 @@ void ECU_Settings_Pack(EcuFlashSettings *out)
   out->sensMapEn = sensMapEn;
   out->sensTpsEn = sensTpsEn;
   out->mapLoadRefKpa = (uint16_t)gMapLoadRefKpa;
+  {
+    uint16_t e = (uint16_t)(gEoiBtdc + 0.5f);
+    if (e < 10) e = 10;
+    if (e > 540) e = 540;
+    out->reserved[0] = (uint8_t)(e & 0xFFu);
+    out->reserved[1] = (uint8_t)((e >> 8) & 0xFFu);
+  }
 }
 
 void ECU_Settings_Apply(const EcuFlashSettings *in)
@@ -180,7 +199,10 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
   gCoilSmart = in->coilSmart ? 1 : 0;
   if (in->cylinders >= 1 && in->cylinders <= MAX_CYL)
     gCyl = in->cylinders;
-  gWheelId = in->wheelId;
+  if (in->wheelId != 0)
+    ECU_ApplyWheelId(in->wheelId);
+  else
+    gWheelId = 0;
   gDbwEnable = in->dbwEnable ? 1 : 0;
   gIdleOutMode = in->idleOutMode;
   idleEnable = in->idleEnable ? 1 : 0;
@@ -192,10 +214,9 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
   if (in->rpmLimit >= 2000 && in->rpmLimit <= 12000)
     gRpmLimit = in->rpmLimit;
   gRpmCutMode = in->rpmCutMode ? 1 : 0;
+  gFanEnable = in->fanEnable ? 1u : 0u;
   if (in->fanEnable)
     gFanOnC = (float)in->fanOnC;
-  else
-    gFanOnC = 200.0f;
   o2SensorMode = in->o2Mode;
   vvtClEnable = in->vvtMode ? 1 : 0;
   sensEctEn = in->sensEctEn ? 1 : 0;
@@ -205,9 +226,11 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
   sensTpsEn = in->sensTpsEn ? 1 : 0;
   if (in->mapLoadRefKpa >= 50 && in->mapLoadRefKpa <= 250)
     gMapLoadRefKpa = (float)in->mapLoadRefKpa;
-  /* Sequential ign/inj is meaningless without a cam home reference */
-  if ((gIgnMode == 1 || gInjMode == 2 || gInjMode == 3) && gCamMode == 0)
-    gCamMode = 1;
+  {
+    uint16_t e = (uint16_t)in->reserved[0] | ((uint16_t)in->reserved[1] << 8);
+    if (e >= 10 && e <= 540)
+      gEoiBtdc = (float)e;
+  }
   ECU_Idle_SetEnable(idleEnable);
   ECU_Idle_SetTargetRpm((uint16_t)idleTargetRpm);
 }
@@ -243,6 +266,88 @@ void fillFlashBlob(EcuFlashBlob *blob)
   }
   /* Full engine settings (v8+) */
   ECU_Settings_Pack(&blob->settings);
+
+  for (uint8_t r = 0; r < 8; r++) {
+    for (uint8_t c = 0; c < 8; c++) {
+      blob->vvtIn[r][c] = vvtInMap[r][c];
+      blob->vvtEx[r][c] = vvtExMap[r][c];
+      {
+        float x = bstMap[r][c] * 10.0f;
+        if (x > 30000.0f) x = 30000.0f;
+        if (x < -30000.0f) x = -30000.0f;
+        blob->bstQ10[r][c] = (int16_t)x;
+      }
+    }
+  }
+  for (uint8_t r = 0; r < 16 && r < ETB_ROWS; r++)
+    for (uint8_t c = 0; c < 17 && c < ETB_COLS; c++)
+      blob->etb[r][c] = etbMap[r][c];
+  for (uint8_t c = 0; c < COLS && c < 22; c++) {
+    float rpm = rpmBinsLive[c];
+    if (rpm < 0) rpm = 0;
+    if (rpm > 20000) rpm = 20000;
+    blob->rpmBins[c] = (uint16_t)(rpm + 0.5f);
+  }
+  for (uint8_t r = 0; r < ROWS && r < 12; r++) {
+    float kpa = mapBinsLive[r];
+    if (kpa < 0) kpa = 0;
+    if (kpa > 500) kpa = 500;
+    blob->mapBins[r] = (uint16_t)(kpa + 0.5f);
+  }
+  blob->veMode = gVeMode ? 1u : 0u;
+  blob->reqFuelCenti = (uint16_t)(gReqFuelMs * 100.0f + 0.5f);
+  blob->injFlow = (uint16_t)(gInjFlowCcMin + 0.5f);
+  blob->flexEn = gFlexEnable ? 1u : 0u;
+  blob->flexA0 = gFlexAdcE0;
+  blob->flexA1 = gFlexAdcE100;
+  blob->flexFuelCenti = (int16_t)(gFlexFuelPctPer10 * 100.0f);
+  blob->flexIgnCenti = (int16_t)(gFlexIgnDegPer10 * 100.0f);
+}
+
+void ECU_Persist_Touch(void)
+{
+  mapsDirty = 1;
+  persistDueMs = millis() + 2000u;
+}
+
+void ECU_Persist_Service(void)
+{
+  /* Do not auto-erase flash here. F411 is single-bank: a sector
+   * erase stalls the CPU ~1 s and looks like a lock-up / USB drop.
+   * NVM write only on explicit SAVE (queued to ECU_Loop). */
+  (void)persistDueMs;
+}
+
+void ECU_Flash_ApplyExtras(const EcuFlashBlob *blob)
+{
+  if (!blob || blob->version < 10u)
+    return;
+  for (uint8_t r = 0; r < 8; r++) {
+    for (uint8_t c = 0; c < 8; c++) {
+      vvtInMap[r][c] = blob->vvtIn[r][c];
+      vvtExMap[r][c] = blob->vvtEx[r][c];
+      bstMap[r][c] = (float)blob->bstQ10[r][c] * 0.1f;
+    }
+  }
+  for (uint8_t r = 0; r < 16 && r < ETB_ROWS; r++)
+    for (uint8_t c = 0; c < 17 && c < ETB_COLS; c++)
+      etbMap[r][c] = blob->etb[r][c];
+  for (uint8_t c = 0; c < COLS && c < 22; c++)
+    if (blob->rpmBins[c] >= 200)
+      rpmBinsLive[c] = (float)blob->rpmBins[c];
+  for (uint8_t r = 0; r < ROWS && r < 12; r++)
+    if (blob->mapBins[r] >= 10)
+      mapBinsLive[r] = (float)blob->mapBins[r];
+  gVeMode = blob->veMode ? 1u : 0u;
+  if (blob->reqFuelCenti >= 30 && blob->reqFuelCenti <= 2000)
+    gReqFuelMs = blob->reqFuelCenti / 100.0f;
+  if (blob->injFlow >= 50)
+    gInjFlowCcMin = (float)blob->injFlow;
+  gFlexEnable = blob->flexEn ? 1u : 0u;
+  if (blob->flexA0) gFlexAdcE0 = blob->flexA0;
+  if (blob->flexA1) gFlexAdcE100 = blob->flexA1;
+  gFlexFuelPctPer10 = blob->flexFuelCenti / 100.0f;
+  gFlexIgnDegPer10 = blob->flexIgnCenti / 100.0f;
 }
 
 
@@ -251,6 +356,10 @@ void servicePendingSave(void)
 {
   if (!savePending)
     return;
+  if (rpmLive > 0)
+    return; /* keep queued until stopped */
+  if ((int32_t)(millis() - persistDueMs) < 0)
+    return; /* let USB TX finish before IRQs go offline */
   savePending = 0;
 
   EcuFlashBlob blob;
@@ -274,22 +383,15 @@ void servicePendingSave(void)
   int8_t flashA0 = -128;
   uint8_t flashI0 = 0;
   uint32_t crc = 0, addr = ECU_Flash_SectorAddr();
-  if (err == 0) {
-    /* Brief settle then verify; do not fail the whole SAVE on a soft CRC glitch */
-    for (int i = 0; i < 30; i++)
-      ECU_Serial_Service();
+  if (err == 0 && ECU_Flash_Present()) {
     EcuFlashBlob rb;
     if (ECU_Flash_Load(&rb)) {
       flashA0 = rb.advMap[0][0];
       flashI0 = rb.injMap[0][0];
       crc = rb.crc32;
       mapsDirty = 0;
-    } else if (ECU_Flash_Present()) {
-      /* Programmed but CRC path strict — still report programmed address */
-      crc = ECU_Flash_StoredCrc();
-      mapsDirty = 0;
     } else {
-      err = -6;
+      err = -6; /* CRC/load failed after program */
       saveLastErr = (int8_t)err;
     }
   }
@@ -350,19 +452,74 @@ void handleLine(char *line) {
     }
   }
 
-  /* SAVE — deferred to ECU_Loop (USB-safe); only block if engine running */
-  if (!strncmp(line, "SAVE", 4)) {
-    if (rpmLive > 400 && syncLocked) {
-      uartWrite("ERR:SAVE,RPM");
-      return;
+  /* SAVE — queue NVM write (executed in ECU_Loop) */
+  /* SAVE — write NVM immediately (maps must already be in RAM) */
+    if (!strncmp(line, "SET:VEMODE,", 11)) {
+    int v = 0;
+    sscanf(line + 11, "%d", &v);
+    gVeMode = v ? 1u : 0u;
+    ECU_Persist_Touch();
+    uartWrite("OK:VEMODE\r\n");
+    return;
+  }
+  /* SET:AE,en,tpsDotThresh,gain,maxPct,decayMs */
+  if (!strncmp(line, "SET:AE,", 7)) {
+    int en = 1, decay = 400;
+    float thr = 20.0f, gain = 1.5f, mx = 40.0f;
+    if (sscanf(line + 7, "%d,%f,%f,%f,%d", &en, &thr, &gain, &mx, &decay) >= 1) {
+      aeEnable = en ? 1u : 0u;
+      if (thr < 1.0f) thr = 1.0f;
+      if (thr > 500.0f) thr = 500.0f;
+      if (gain < 0.0f) gain = 0.0f;
+      if (gain > 20.0f) gain = 20.0f;
+      if (mx < 0.0f) mx = 0.0f;
+      if (mx > 150.0f) mx = 150.0f;
+      if (decay < 50) decay = 50;
+      if (decay > 5000) decay = 5000;
+      aeTpsDotThresh = thr;
+      aeGain = gain;
+      aeMaxPct = mx;
+      aeDecayMs = (uint16_t)decay;
+      ECU_Persist_Touch();
+      uartWrite("OK:AE\r\n");
+    } else uartErr("AE", "PARSE");
+    return;
+  }
+  if (!strncmp(line, "SET:REQFUEL,", 12)) {
+    float req = 2.5f, flow = 220.0f, pAct = 3.0f, pRat = 3.0f;
+    int n = sscanf(line + 12, "%f,%f,%f,%f", &req, &flow, &pAct, &pRat);
+    if (req < 0.3f) req = 0.3f;
+    if (req > 20.0f) req = 20.0f;
+    if (flow < 50.0f) flow = 50.0f;
+    if (flow > 5000.0f) flow = 5000.0f;
+    gReqFuelMs = req;
+    gInjFlowCcMin = flow;
+    if (n >= 3) {
+      if (pAct < 0.5f) pAct = 0.5f;
+      if (pAct > 15.0f) pAct = 15.0f;
+      gFuelPressureBar = pAct;
     }
-    uploadMode = 0;
-    uploadRow  = 0;
-    savePending = 1;
-    uartWrite("BUSY:SAVE\r\n");
+    if (n >= 4) {
+      if (pRat < 0.5f) pRat = 0.5f;
+      if (pRat > 15.0f) pRat = 15.0f;
+      gFuelPressureRatedBar = pRat;
+    }
+    ECU_Persist_Touch();
+    uartWrite("OK:REQFUEL\r\n");
     return;
   }
 
+
+if (!strncmp(line, "SAVE", 4)) {
+    /* Never erase/program from the USB command path. */
+    uploadMode = 0;
+    uploadRow  = 0;
+    mapsDirty = 1;
+    savePending = 1;
+    persistDueMs = millis() + 50u;
+    uartWrite("OK:SAVE,QUEUED\r\n");
+    return;
+  }
 
 
   if (!strncmp(line, "UPLOAD:ADV", 10)) {
@@ -382,32 +539,34 @@ void handleLine(char *line) {
     int en = 1;
     const char *comma = strchr(p, ',');
     if (comma) en = atoi(comma + 1);
-    if (!strncmp(p, "CAMMODE", 7)) {
-      int m = atoi(p + 8);
-      gCamMode = (m > 0) ? 1 : 0;
-      uartWrite("OK:CAMMODE\r\n"); return;
-    }
-    if (!strncmp(p, "FANEN", 5)) {
-      int en = atoi(p + 6);
-      gFanEnable = en ? 1 : 0;
-      if (!gFanEnable) { fanOn = 0; ECU_FAN_LO(); }
-      uartWrite("OK:FANEN\r\n"); return;
-    }
-    if (!strncmp(p, "TACHO", 5)) {
-      /* SET:TACHO,en,ppr */
-      int en = 0, ppr = 2;
-      sscanf(p + 5, ",%d,%d", &en, &ppr);
-      gTachoEnable = en ? 1 : 0;
-      if (ppr < 1) ppr = 1;
-      if (ppr > 12) ppr = 12;
-      gTachoPpr = (uint8_t)ppr;
-      uartWrite("OK:TACHO\r\n"); return;
-    }
     if (!strncmp(p, "ECT", 3)) { sensEctEn = en ? 1 : 0; uartWrite("OK:SENS:ECT\r\n"); return; }
     if (!strncmp(p, "IAT", 3)) { sensIatEn = en ? 1 : 0; uartWrite("OK:SENS:IAT\r\n"); return; }
     if (!strncmp(p, "O2", 2))  { sensO2En  = en ? 1 : 0; uartWrite("OK:SENS:O2\r\n");  return; }
     if (!strncmp(p, "MAP", 3)) { sensMapEn = en ? 1 : 0; uartWrite("OK:SENS:MAP\r\n"); return; }
     if (!strncmp(p, "TPS", 3)) { sensTpsEn = en ? 1 : 0; uartWrite("OK:SENS:TPS\r\n"); return; }
+    if (!strncmp(p, "CAMMODE", 7)) { gCamMode = en ? 1u : 0u; uartWrite("OK:SENS:CAMMODE\r\n"); return; }
+    if (!strncmp(p, "FANEN", 5)) {
+      gFanEnable = en ? 1u : 0u;
+      if (!en) {
+        fanOn = 0;
+        ECU_FAN_LO();
+      }
+      uartWrite("OK:SENS:FANEN\r\n");
+      return;
+    }
+    if (!strncmp(p, "TACHO", 5)) {
+      int ppr = 2;
+      if (comma) {
+        const char *p2 = strchr(comma + 1, ',');
+        if (p2) ppr = atoi(p2 + 1);
+      }
+      gTachoEnable = en ? 1u : 0u;
+      if (ppr < 1) ppr = 1;
+      if (ppr > 12) ppr = 12;
+      gTachoPpr = (uint8_t)ppr;
+      uartWrite("OK:SENS:TACHO\r\n");
+      return;
+    }
     uartErr("SENS", "PARSE");
     return;
   }
@@ -421,42 +580,6 @@ void handleLine(char *line) {
 
   /* Load mode: SET:L,mode  or SET:L,0,0,mode  (0=MAP 1=TPS 2=Hybrid)
    * Optional: SET:LREF,kpa  — MAP kPa that equals load 1.0 (default 100) */
-
-  if (!strncmp(line, "SET:FAN,", 8)) {
-    /* SET:FAN,<onTempC> — threshold; requires FANEN=1 to drive */
-    int t = atoi(line + 8);
-    if (t < 40) t = 40;
-    if (t > 130) t = 130;
-    gFanOnC = (float)t;
-    mapsDirty = 1;
-    {
-      char b[40];
-      snprintf(b, sizeof b, "OK:FAN,%d\r\n", t);
-      uartWrite(b);
-    }
-    return;
-  }
-  if (!strncmp(line, "SET:FANON,", 10)) {
-    /* Forced fan for bench: SET:FANON,0|1 (only when RPM=0) */
-    int on = atoi(line + 10);
-    if (rpmLive > 0) { uartWrite("ERR:FANON,RPM\r\n"); return; }
-    if (on) { fanOn = 1; ECU_FAN_HI(); }
-    else    { fanOn = 0; ECU_FAN_LO(); }
-    uartWrite("OK:FANON\r\n");
-    return;
-  }
-  if (!strncmp(line, "OUTTEST", 7) || !strncmp(line, "SET:OUTTEST", 11)) {
-    if (rpmLive > 0 || syncLocked) {
-      uartWrite("ERR:OUTTEST,RPM\r\n");
-      return;
-    }
-    outTestActive = 1;
-    outTestStep = 0;
-    outTestNextMs = millis();
-    uartWrite("OK:OUTTEST\r\n");
-    return;
-  }
-
   if (!strncmp(line, "SET:LREF,", 9)) {
     float ref = 100.0f;
     if (parse_float(line + 9, &ref) > 0) {
@@ -571,6 +694,23 @@ void handleLine(char *line) {
     } else uartErr("IDLERPM", "PARSE");
     return;
   }
+  /* SET:IDLETGT,idx,ectC,targetRpm — 5-point closed-loop idle target vs ECT */
+  if (!strncmp(line, "SET:IDLETGT,", 12)) {
+    int idx = 0;
+    float ect = 0.0f, rpm = 850.0f;
+    if (sscanf(line + 12, "%d,%f,%f", &idx, &ect, &rpm) == 3) {
+      if (idx >= 0 && idx < 5) {
+        if (rpm < 500.0f) rpm = 500.0f;
+        if (rpm > 2000.0f) rpm = 2000.0f;
+        idleTgtEctBins[idx] = ect;
+        idleTgtRpmTbl[idx] = rpm;
+        if (idx == 4)
+          idleTargetRpm = rpm;
+        uartWrite("OK:IDLETGT\r\n");
+      } else uartErr("IDLETGT", "IDX");
+    } else uartErr("IDLETGT", "PARSE");
+    return;
+  }
   if (!strncmp(line, "SET:IDLEPID,", 12)) {
     /* SET:IDLEPID,kp,ki,kd  (scaled: send as int *1000 e.g. 12,8,2 → 0.012) */
     int a=0,b=0,c=0;
@@ -598,7 +738,7 @@ void handleLine(char *line) {
       return;
     }
     advMap[r][c] = clampAdv((int)(v + (v >= 0 ? 0.5f : -0.5f)));
-    mapsDirty = 1;
+    ECU_Persist_Touch();
     return;
   }
   if (!strncmp(line, "SET:I,", 6)) {
@@ -619,16 +759,121 @@ void handleLine(char *line) {
       return;
     }
     injMap[r][c] = clampInj(v);
-    mapsDirty = 1;
+    ECU_Persist_Touch();
+    return;
+  }
+  if (!strncmp(line, "OUTTEST", 7) || !strncmp(line, "SET:OUTTEST", 11)) {
+    if (rpmLive > 0 || syncLocked) {
+      uartErr("OUTTEST", "RPM");
+      return;
+    }
+    outTestActive = 1;
+    outTestStep = 0;
+    outTestNextMs = millis();
+    uartWrite("OK:OUTTEST\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:INJMODE,", 12)) {
+    int m = atoi(line + 12);
+    if (m < 1) m = 1;
+    if (m > 3) m = 3;
+    gInjMode = (uint8_t)m;
+    if (gInjMode == 2)
+      gCamMode = 1; /* sequential needs cam home */
+    {
+      char b[32];
+      snprintf(b, sizeof b, "OK:INJMODE,%u\r\n", (unsigned)gInjMode);
+      uartWrite(b);
+    }
+    return;
+  }
+  if (!strncmp(line, "SET:IGNMODE,", 12)) {
+    int m = atoi(line + 12);
+    if (m < 0) m = 0;
+    if (m > 1) m = 1;
+    gIgnMode = (uint8_t)m;
+    if (gIgnMode == 1)
+      gCamMode = 1;
+    {
+      char b[32];
+      snprintf(b, sizeof b, "OK:IGNMODE,%u\r\n", (unsigned)gIgnMode);
+      uartWrite(b);
+    }
+    return;
+  }
+  if (!strncmp(line, "SET:CYL,", 8)) {
+    int c = atoi(line + 8);
+    if (c < 1) c = 1;
+    if (c > MAX_CYL) c = MAX_CYL;
+    gCyl = (uint8_t)c;
+    {
+      char b[24];
+      snprintf(b, sizeof b, "OK:CYL,%u\r\n", (unsigned)gCyl);
+      uartWrite(b);
+    }
+    return;
+  }
+  if (!strncmp(line, "SET:BATCHRPM,", 13)) {
+    int r = atoi(line + 13);
+    if (r < 500) r = 500;
+    if (r > 9000) r = 9000;
+    gBatchAboveRpm = (uint16_t)r;
+    uartWrite("OK:BATCHRPM\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:COILTYPE,", 13)) {
+    int t = atoi(line + 13);
+    if (t < 0) t = 0;
+    if (t > 2) t = 2;
+    gCoilType = (uint8_t)t;
+    gCoilSmart = (t == 0) ? 1u : 0u;
+    uartWrite("OK:COILTYPE\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:COILMODE,", 13)) {
+    int m = atoi(line + 13);
+    if (m < 0) m = 0;
+    if (m > 1) m = 1;
+    gCoilChargeMode = (uint8_t)m;
+    uartWrite("OK:COILMODE\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:FAN,", 8)) {
+    int t = atoi(line + 8);
+    if (t < 60) t = 60;
+    if (t > 130) t = 130;
+    gFanOnC = (float)t;
+    uartWrite("OK:FAN\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:FLEX,", 9)) {
+    int en = 0, a0 = 410, a1 = 3686;
+    float fp = 4.7f, ip = 0.8f;
+    (void)sscanf(line + 9, "%d,%d,%d,%f,%f", &en, &a0, &a1, &fp, &ip);
+    gFlexEnable = en ? 1u : 0u;
+    if (a0 > 0 && a0 < 4095) gFlexAdcE0 = (uint16_t)a0;
+    if (a1 > 0 && a1 < 4095) gFlexAdcE100 = (uint16_t)a1;
+    gFlexFuelPctPer10 = fp;
+    gFlexIgnDegPer10 = ip;
+    uartWrite("OK:FLEX\r\n");
     return;
   }
   if (!strncmp(line, "SET:WHEEL,", 10) || !strncmp(line, "CFG:WHEEL,", 10)) {
     int id = 0;
     if (strchr(line, ',') && sscanf(strchr(line, ',') + 1, "%d", &id) == 1) {
       ECU_ApplyWheelId((uint8_t)id);
-      char b[40];
-      snprintf(b, sizeof b, "OK:WHEEL,%u\r\n", (unsigned)gWheelId);
-      uartWrite(b);
+      if (id == 0)
+        gWheelId = 0;
+      ECU_Persist_Touch();
+      {
+        char b[48];
+        snprintf(b, sizeof b, "OK:WHEEL,%u,%u,%u,CAM:%u\r\n",
+                 (unsigned)gWheelId, (unsigned)gTeeth, (unsigned)gMissing,
+                 (unsigned)gCamMode);
+        uartWrite(b);
+      }
+    } else {
+      uartWrite("ERR:WHEEL\r\n");
     }
     return;
   }
@@ -637,7 +882,7 @@ void handleLine(char *line) {
     int te, mi, an;
     if (sscanf(line + 4, "%d,%d,%d", &te, &mi, &an) >= 3) {
       if (te >= 12 && te <= 60) gTeeth = (uint8_t)te;
-      if (mi >= 0 && mi < gTeeth) gMissing = (uint8_t)mi;
+      if (mi >= 1 && mi < gTeeth) gMissing = (uint8_t)mi;
       gTrigAngle = (uint16_t)an;
       syncLocked = 0;
       camSynced = 0;
@@ -645,97 +890,21 @@ void handleLine(char *line) {
     return;
   }
 
-
-  if (!strncmp(line, "SET:COILTYPE,", 13)) {
-    int t = 0;
-    if (sscanf(line + 13, "%d", &t) == 1) {
-      if (t < 0) t = 0;
-      if (t > 2) t = 2;
-      gCoilType = (uint8_t)t;
-      /* Smart → constant duty; Dumb/Dist → constant charge time */
-      if (gCoilType == 0) gCoilChargeMode = 0;
-      else gCoilChargeMode = 1;
-      char b[40];
-      snprintf(b, sizeof b, "OK:COILTYPE,%u,MODE:%u\r\n",
-               (unsigned)gCoilType, (unsigned)gCoilChargeMode);
-      uartWrite(b);
-    } else uartErr("COILTYPE", "PARSE");
-    return;
-  }
-  if (!strncmp(line, "SET:COILMODE,", 13)) {
-    int m = 0;
-    if (sscanf(line + 13, "%d", &m) == 1) {
-      if (m < 0) m = 0;
-      if (m > 1) m = 1;
-      gCoilChargeMode = (uint8_t)m;
-      char b[32];
-      snprintf(b, sizeof b, "OK:COILMODE,%u\r\n", (unsigned)gCoilChargeMode);
-      uartWrite(b);
-    } else uartErr("COILMODE", "PARSE");
-    return;
-  }
-
-
-  if (!strncmp(line, "SET:CYL,", 8)) {
-    int n = 0;
-    if (sscanf(line + 8, "%d", &n) == 1) {
-      if (rpmLive > 0 || syncLocked) { uartWrite("ERR:CYL,RPM\r\n"); return; }
-      if (n < 1) n = 1;
-      if (n > MAX_CYL) n = MAX_CYL;
-      gCyl = (uint8_t)n;
-      char b[32];
-      snprintf(b, sizeof b, "OK:CYL,%u\r\n", (unsigned)gCyl);
-      uartWrite(b);
-    } else uartErr("CYL", "PARSE");
-    return;
-  }
-  if (!strncmp(line, "SET:BATCHRPM,", 13)) {
-    int rpm = 0;
-    if (sscanf(line + 13, "%d", &rpm) == 1) {
-      if (rpm < 500) rpm = 500;
-      if (rpm > 9000) rpm = 9000;
-      gBatchAboveRpm = (uint16_t)rpm;
-      char b[32];
-      snprintf(b, sizeof b, "OK:BATCHRPM,%u\r\n", (unsigned)gBatchAboveRpm);
-      uartWrite(b);
-    } else uartErr("BATCHRPM", "PARSE");
-    return;
-  }
-  if (!strncmp(line, "SET:IGNMODE,", 12)) {
-    int m = 0;
-    if (sscanf(line + 12, "%d", &m) == 1) {
-      gIgnMode = (m == 1) ? 1 : 0;
-      if (gIgnMode == 1 && gCamMode == 0) gCamMode = 1;
-      if (gIgnMode == 0) { camSynced = 0; camLockHits = 0; }
-      uartWrite("OK:IGNMODE\r\n");
-    }
-    return;
-  }
-  if (!strncmp(line, "SET:INJMODE,", 12)) {
-    int m = 0;
-    if (sscanf(line + 12, "%d", &m) == 1) {
-      if (m < 1) m = 1;
-      if (m > 3) m = 3;
-      gInjMode = (uint8_t)m;
-      if ((gInjMode == 2 || gInjMode == 3) && gCamMode == 0) gCamMode = 1;
-      uartWrite("OK:INJMODE\r\n");
-    }
-    return;
-  }
   if (!strncmp(line, "GETCFG", 6)) {
-    char b[200];
+    char b[160];
     snprintf(b, sizeof b,
-      "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,WHEEL:%u,CAMMODE:%u,"
-      "FANEN:%u,TACHO:%u,TACHOPPR:%u,COILTYPE:%u,COILMODE:%u,BATCHRPM:%u\r\n",
-      (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
-      (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
-      (unsigned)gWheelId, (unsigned)gCamMode,
-      (unsigned)gFanEnable, (unsigned)gTachoEnable, (unsigned)gTachoPpr,
-      (unsigned)gCoilType, (unsigned)gCoilChargeMode,
-      (unsigned)gBatchAboveRpm);
+             "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
+             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f\r\n",
+             (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
+             (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
+             (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
+             (unsigned)gWheelId, (unsigned)gCamMode,
+             (unsigned)(boostEnable ? (bstOpenLoop ? 2u : 1u) : 0u),
+             (double)gEoiBtdc);
     uartWrite(b);
     return;
   }
+
 
   if (!strncmp(line, "GETWHEEL", 8)) {
     char wb[64];
@@ -817,6 +986,21 @@ void handleLine(char *line) {
     return;
   }
 
+  if (!strncmp(line, "SET:EOI,", 8)) {
+    float e = 0.0f;
+    if (parse_float(line + 8, &e)) {
+      if (e < 10.0f) e = 10.0f;
+      if (e > 540.0f) e = 540.0f;
+      gEoiBtdc = e;
+    }
+    {
+      char b[32];
+      snprintf(b, sizeof b, "OK:EOI,%.0f\r\n", (double)gEoiBtdc);
+      uartWrite(b);
+    }
+    return;
+  }
+
   if (!strncmp(line, "SET:TRIG,", 9) || !strncmp(line, "SET:B,", 6)) {
     int a = 0;
     const char *p = strchr(line, ',');
@@ -834,6 +1018,70 @@ void handleLine(char *line) {
     uartWrite(b);
     return;
   }
+
+  if (!strncmp(line, "SET:IGNLIM,", 11)) {
+    int a = 40, r = 10;
+    sscanf(line + 11, "%d,%d", &a, &r);
+    if (a < 0) a = 0;
+    if (a > 60) a = 60;
+    if (r < 0) r = 0;
+    if (r > 30) r = 30;
+    gMaxAdvDeg = (int8_t)a;
+    gMaxRetDeg = (int8_t)r;
+    uartWrite("OK:IGNLIM\r\n");
+    return;
+  }
+
+  if (!strncmp(line, "SET:INJMAX,", 11)) {
+    float mx = 15.0f;
+    sscanf(line + 11, "%f", &mx);
+    if (mx < 1.0f) mx = 1.0f;
+    if (mx > 30.0f) mx = 30.0f;
+    gMaxInjMs = mx;
+    uartWrite("OK:INJMAX\r\n");
+    return;
+  }
+
+  if (!strncmp(line, "SET:DFCO,", 9)) {
+    int en = 1, ent = 1600, ex = 1200, dly = 200;
+    float tps = 3.0f, ect = 50.0f;
+    int n = sscanf(line + 9, "%d,%d,%d,%f,%f,%d", &en, &ent, &ex, &tps, &ect, &dly);
+    if (n >= 1) dfcoEnable = en ? 1 : 0;
+    if (n >= 2) {
+      if (ent < 500) ent = 500;
+      if (ent > 8000) ent = 8000;
+      dfcoEnterRpm = (uint16_t)ent;
+    }
+    if (n >= 3) {
+      if (ex < 400) ex = 400;
+      if (ex > 7000) ex = 7000;
+      if (ex >= (int)dfcoEnterRpm) ex = (int)dfcoEnterRpm - 50;
+      if (ex < 400) ex = 400;
+      dfcoExitRpm = (uint16_t)ex;
+    }
+    if (n >= 4) {
+      if (tps < 0.0f) tps = 0.0f;
+      if (tps > 20.0f) tps = 20.0f;
+      dfcoMaxTps = tps;
+    }
+    if (n >= 5) {
+      if (ect < 0.0f) ect = 0.0f;
+      if (ect > 120.0f) ect = 120.0f;
+      dfcoMinEct = ect;
+    }
+    if (n >= 6) {
+      if (dly > 5000) dly = 5000;
+      if (dly < 0) dly = 0;
+      dfcoDelayMs = (uint16_t)dly;
+    }
+    if (!dfcoEnable) {
+      dfcoActive = 0;
+      dfcoEnterMs = 0;
+    }
+    uartWrite("OK:DFCO\r\n");
+    return;
+  }
+
 
 
   if (!strncmp(line, "GETDTC", 6)) {
@@ -1116,6 +1364,183 @@ if (!strncmp(line, "GETPROTO", 8) || !strncmp(line, "PROTO?", 6)) {
              (int)advMap[0][0], (unsigned)injMap[0][0],
              (unsigned)mapsDirty);
     uartWrite(b);
+    return;
+  }
+  /* WUE = CSE table: SET:WUE,i,tempC,pctAdd */
+  if (!strncmp(line, "SET:WUE,", 8)) {
+    int i = 0;
+    float tC = 0.0f, pct = 0.0f;
+    if (sscanf(line + 8, "%d,%f,%f", &i, &tC, &pct) != 3) {
+      uartErr("WUE", "PARSE");
+      return;
+    }
+    if (i < 0 || i >= CSE_N) {
+      uartErr("WUE", "INDEX");
+      return;
+    }
+    if (tC < -40.0f) tC = -40.0f;
+    if (tC > 150.0f) tC = 150.0f;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 150.0f) pct = 150.0f;
+    cseTemp[i] = tC;
+    csePct[i] = pct;
+    uartWrite("OK:WUE\r\n");
+    return;
+  }
+  /* ASE: SET:ASE,initialPct,decaySec,minEct */
+  if (!strncmp(line, "SET:ASE,", 8)) {
+    float pct, decay, minE;
+    if (sscanf(line + 8, "%f,%f,%f", &pct, &decay, &minE) != 3) {
+      uartErr("ASE", "PARSE");
+      return;
+    }
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    if (decay < 0.5f) decay = 0.5f;
+    if (decay > 30.0f) decay = 30.0f;
+    if (minE < -20.0f) minE = -20.0f;
+    if (minE > 100.0f) minE = 100.0f;
+    aseInitialPct = pct;
+    aseDecaySec = decay;
+    aseMinEct = minE;
+    uartWrite("OK:ASE\r\n");
+    return;
+  }
+
+  /* Diagnostic injector disable mask: SET:INJDIS,mask  bit0=cyl1 */
+
+  if (!strncmp(line, "SET:VSS,", 8)) {
+    int en = 0, ppk = 8000;
+    if (sscanf(line + 8, "%d,%d", &en, &ppk) < 1) { uartErr("VSS", "PARSE"); return; }
+    vssEnable = en ? 1u : 0u;
+    if (ppk < 100) ppk = 100;
+    if (ppk > 50000) ppk = 50000;
+    vssPulsesPerKm = (uint16_t)ppk;
+    uartWrite("OK:VSS\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:LCDECAY,", 12)) {
+    int en = 0;
+    if (sscanf(line + 12, "%d", &en) != 1) { uartErr("LCDECAY", "PARSE"); return; }
+    launchDecayEnable = en ? 1u : 0u;
+    if (!en) { launchDecayActive = 0; launchDecayFuelPct = 0; launchDecayRetardDeg = 0; }
+    uartWrite("OK:LCDECAY\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:LCFUEL,", 11)) {
+    int i = 0; float vss = 0, pct = 0;
+    if (sscanf(line + 11, "%d,%f,%f", &i, &vss, &pct) != 3) { uartErr("LCFUEL", "PARSE"); return; }
+    if (i < 0 || i >= LC_VSS_N) { uartErr("LCFUEL", "RANGE"); return; }
+    if (pct < 0) pct = 0;
+    if (pct > 60) pct = 60;
+    if (vss < 0) vss = 0;
+    if (vss > 400) vss = 400;
+    launchVssBins[i] = vss;
+    launchFuelTbl[i] = pct;
+    uartWrite("OK:LCFUEL\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:LCRET,", 10)) {
+    int i = 0; float vss = 0, deg = 0;
+    if (sscanf(line + 10, "%d,%f,%f", &i, &vss, &deg) != 3) { uartErr("LCRET", "PARSE"); return; }
+    if (i < 0 || i >= LC_VSS_N) { uartErr("LCRET", "RANGE"); return; }
+    if (deg < 0) deg = 0;
+    if (deg > 40) deg = 40;
+    if (vss < 0) vss = 0;
+    if (vss > 400) vss = 400;
+    launchVssBins[i] = vss;
+    launchRetardTbl[i] = deg;
+    uartWrite("OK:LCRET\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:INJDIS,", 11)) {
+    int m = 0;
+    if (sscanf(line + 11, "%d", &m) != 1) { uartErr("INJDIS", "PARSE"); return; }
+    injDisableMask = (uint8_t)(m & 0xFF);
+    char b[32];
+    snprintf(b, sizeof b, "OK:INJDIS,%u\r\n", (unsigned)injDisableMask);
+    uartWrite(b);
+    return;
+  }
+  /* Cranking advance: SET:CRANKADV,en,deg,rpm */
+  if (!strncmp(line, "SET:CRANKADV,", 13)) {
+    int en = 1, rpm = 400; float deg = 10.0f;
+    if (sscanf(line + 13, "%d,%f,%d", &en, &deg, &rpm) < 1) {
+      uartErr("CRANKADV", "PARSE"); return;
+    }
+    crankAdvEnable = en ? 1 : 0;
+    if (deg < -5.0f) deg = -5.0f;
+    if (deg > 30.0f) deg = 30.0f;
+    if (rpm < 100) rpm = 100;
+    if (rpm > 1200) rpm = 1200;
+    crankAdvDeg = deg;
+    crankAdvRpm = (uint16_t)rpm;
+    uartWrite("OK:CRANKADV\r\n");
+    return;
+  }
+  /* Flood clear: SET:FLOOD,en,tps */
+  if (!strncmp(line, "SET:FLOOD,", 10)) {
+    int en = 1; float tps = 85.0f;
+    if (sscanf(line + 10, "%d,%f", &en, &tps) < 1) {
+      uartErr("FLOOD", "PARSE"); return;
+    }
+    floodClearEnable = en ? 1 : 0;
+    if (tps < 50.0f) tps = 50.0f;
+    if (tps > 100.0f) tps = 100.0f;
+    floodClearTps = tps;
+    uartWrite("OK:FLOOD\r\n");
+    return;
+  }
+  /* AFR target map enable */
+  if (!strncmp(line, "SET:AFRMAPEN,", 13)) {
+    int en = 0;
+    if (sscanf(line + 13, "%d", &en) != 1) { uartErr("AFRMAPEN", "PARSE"); return; }
+    afrMapEnable = en ? 1 : 0;
+    uartWrite("OK:AFRMAPEN\r\n");
+    return;
+  }
+  /* SET:AFR,r,c,value */
+  if (!strncmp(line, "SET:AFR,", 8)) {
+    int r = 0, c = 0; float v = 14.7f;
+    if (sscanf(line + 8, "%d,%d,%f", &r, &c, &v) != 3) {
+      uartErr("AFR", "PARSE"); return;
+    }
+    if (r < 0 || r >= AFR_MAP_ROWS || c < 0 || c >= AFR_MAP_COLS) {
+      uartErr("AFR", "RANGE"); return;
+    }
+    if (v < 8.0f) v = 8.0f;
+    if (v > 22.0f) v = 22.0f;
+    afrMap[r][c] = v;
+    uartWrite("OK:AFR\r\n");
+    return;
+  }
+  /* Idle fuel/ign 5×5: SET:IDLEFUEL,r,c,pct  SET:IDLEIGN,r,c,deg */
+  if (!strncmp(line, "SET:IDLEFUEL,", 13)) {
+    int r = 0, c = 0; float v = 0;
+    if (sscanf(line + 13, "%d,%d,%f", &r, &c, &v) != 3) {
+      uartErr("IDLEFUEL", "PARSE"); return;
+    }
+    if (r < 0 || r >= IDLE_MAP_N || c < 0 || c >= IDLE_MAP_N) {
+      uartErr("IDLEFUEL", "RANGE"); return;
+    }
+    if (v < -20.0f) v = -20.0f;
+    if (v > 40.0f) v = 40.0f;
+    idleFuelMap[r][c] = v;
+    uartWrite("OK:IDLEFUEL\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:IDLEIGN,", 12)) {
+    int r = 0, c = 0; float v = 0;
+    if (sscanf(line + 12, "%d,%d,%f", &r, &c, &v) != 3) {
+      uartErr("IDLEIGN", "PARSE"); return;
+    }
+    if (r < 0 || r >= IDLE_MAP_N || c < 0 || c >= IDLE_MAP_N) {
+      uartErr("IDLEIGN", "RANGE"); return;
+    }
+    if (v < -10.0f) v = -10.0f;
+    if (v > 20.0f) v = 20.0f;
+    idleIgnMap[r][c] = v;
+    uartWrite("OK:IDLEIGN\r\n");
     return;
   }
   if (!strncmp(line, "GETUART", 7) || !strncmp(line, "GETCDC", 6)) {

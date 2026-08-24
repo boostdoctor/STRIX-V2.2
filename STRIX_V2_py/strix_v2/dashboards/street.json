@@ -1,0 +1,13 @@
+{
+  "name": "Street",
+  "gauges": [
+    {"key": "rpm",  "title": "RPM",    "unit": "",    "min": 0,   "max": 8000, "hero": true,  "row": 0, "col": 0, "rowspan": 2, "colspan": 1},
+    {"key": "tps",  "title": "TPS",    "unit": "%",   "min": 0,   "max": 100,  "hero": false, "row": 0, "col": 1},
+    {"key": "map",  "title": "MAP",    "unit": "kPa", "min": 0,   "max": 250,  "hero": false, "row": 0, "col": 2},
+    {"key": "ign",  "title": "IGN",    "unit": "°",   "min": -10, "max": 45,   "hero": false, "row": 0, "col": 3},
+    {"key": "afr",  "title": "AFR",    "unit": "",    "min": 10,  "max": 20,   "hero": false, "row": 1, "col": 1},
+    {"key": "pw",   "title": "INJ",    "unit": "ms",  "min": 0,   "max": 15,   "hero": false, "row": 1, "col": 2},
+    {"key": "ect",  "title": "ECT",    "unit": "°C",  "min": -20, "max": 120,  "hero": false, "row": 1, "col": 3},
+    {"key": "bat",  "title": "BAT",    "unit": "V",   "min": 8,   "max": 16,   "hero": false, "row": 0, "col": 4, "rowspan": 2}
+  ]
+}

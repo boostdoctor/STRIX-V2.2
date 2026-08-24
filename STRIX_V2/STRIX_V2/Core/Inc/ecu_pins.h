@@ -58,6 +58,17 @@
 #define LED_Pin            GPIO_PIN_13
 #endif
 
+#ifndef TACHO_Pin
+#define TACHO_GPIO_Port    GPIOC
+#define TACHO_Pin          GPIO_PIN_14   /* spare — no LSE on Black Pill */
+#endif
+
+/* ── Vehicle speed (VSS) ─────────────────────────────────────── */
+#ifndef VSS_Pin
+#define VSS_GPIO_Port      GPIOC
+#define VSS_Pin            GPIO_PIN_15   /* EXTI15 / edge count */
+#endif
+
 /* ── Cam 2 (TIM3_CH1) ─────────────────────────────────────── */
 #ifndef CAM2_Pin
 #define CAM2_GPIO_Port   GPIOB
@@ -102,16 +113,10 @@
 #define ECU_VVT2_HI() HAL_GPIO_WritePin(VVT2_GPIO_Port, VVT2_Pin, GPIO_PIN_SET)
 #define ECU_VVT2_LO() HAL_GPIO_WritePin(VVT2_GPIO_Port, VVT2_Pin, GPIO_PIN_RESET)
 
-/* V2.2 Tachometer output — PC14 (Black Pill; not LSE crystal on most boards) */
-#ifndef TACHO_Pin
-#define TACHO_Pin            GPIO_PIN_14
-#define TACHO_GPIO_Port      GPIOC
-#endif
-#define ECU_TACHO_HI() HAL_GPIO_WritePin(TACHO_GPIO_Port, TACHO_Pin, GPIO_PIN_SET)
-#define ECU_TACHO_LO() HAL_GPIO_WritePin(TACHO_GPIO_Port, TACHO_Pin, GPIO_PIN_RESET)
-
 #define ECU_FAN_HI()  HAL_GPIO_WritePin(FAN_GPIO_Port, FAN_Pin, GPIO_PIN_SET)
 #define ECU_FAN_LO()  HAL_GPIO_WritePin(FAN_GPIO_Port, FAN_Pin, GPIO_PIN_RESET)
+#define ECU_TACHO_HI() HAL_GPIO_WritePin(TACHO_GPIO_Port, TACHO_Pin, GPIO_PIN_SET)
+#define ECU_TACHO_LO() HAL_GPIO_WritePin(TACHO_GPIO_Port, TACHO_Pin, GPIO_PIN_RESET)
 #define ECU_FP_HI()   HAL_GPIO_WritePin(FP_GPIO_Port, FP_Pin, GPIO_PIN_SET)
 #define ECU_FP_LO()   HAL_GPIO_WritePin(FP_GPIO_Port, FP_Pin, GPIO_PIN_RESET)
 #define ECU_LED_TOG() HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin)
@@ -129,9 +134,8 @@ extern TIM_HandleTypeDef  htim3;   /* Cam2 PB4 TIM3_CH1 */
 #define ECU_ADC_CH_CLT     ADC_CHANNEL_3
 #define ECU_ADC_CH_IAT     ADC_CHANNEL_4
 #define ECU_ADC_CH_O2      ADC_CHANNEL_5   /* PA5 */
-#define ECU_ADC_CH_KNOCK   ADC_CHANNEL_6   /* PA6 conditioned knock */
+#define ECU_ADC_CH_FLEX    ADC_CHANNEL_6   /* PA6 ethanol / flex fuel */
 #define ECU_ADC_CH_VBATT   ADC_CHANNEL_7   /* PA7 */
-/* PA6 was fuel pressure — Option A: knock takes PA6 */
 #define ECU_ADC_CH_PEDAL   ADC_CHANNEL_12
 
 #endif

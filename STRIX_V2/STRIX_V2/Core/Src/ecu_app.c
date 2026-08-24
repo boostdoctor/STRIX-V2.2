@@ -9,6 +9,7 @@
 #include "ecu_maps.h"
 #include "ecu_runtime.h"
 #include "ecu_internal.h"
+#include "ecu_watchdog.h"
 #include "ecu_adc.h"
 #include <string.h>
 #include <stdio.h>
@@ -32,7 +33,6 @@ void ecuInjGpioInit(void)
 }
 
 void allOutputsOff(void) {
-  ECU_SetVVT(0, 0);
   for (uint8_t i = 1; i <= MAX_CYL; i++) {
     ECU_IGN_LO(i);
     ECU_INJ_LO(i);
@@ -47,69 +47,54 @@ void allOutputsOff(void) {
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
 }
 
-/* Firing order 1-3-4-2 for 4-cyl; 1-5-3-6-2-4 for 6-cyl */
-static const uint8_t order4[4] = {1, 3, 4, 2};
+/* 4-cyl firing orders (gFireOrder 0..2). 6-cyl even-fire 1-5-3-6-2-4. */
+static const uint8_t order4[3][4] = {
+  {1, 3, 4, 2},
+  {1, 2, 4, 3},
+  {1, 3, 2, 4}
+};
 static const uint8_t order6[6] = {1, 5, 3, 6, 2, 4};
 
-uint8_t cylAtSlot(uint8_t slot) {
-  if (gCyl <= 4) return order4[slot % 4];
+uint8_t cylAtSlot(uint8_t slot)
+{
+  if (gCyl <= 4) {
+    uint8_t fo = (gFireOrder <= 2) ? gFireOrder : 0;
+    return order4[fo][slot % 4];
+  }
   return order6[slot % 6];
 }
 
-/* TDC angles ° on 720° cycle for each cylinder (cyl 1 at 0) */
-float tdcDeg(uint8_t cyl) {
-  /* Compression TDC on 720° cycle, firing order 1-3-4-2 (4-cyl default).
-   * 2-cyl: 1@0 2@360; 3-cyl: 1@0 2@240 3@480; 6-cyl even spacing. */
-  static const float t2[3] = {0, 0, 360};
-  static const float t3[4] = {0, 0, 240, 480};
-  static const float t4[5] = {0, 0, 540, 180, 360}; /* 1-3-4-2 */
-  static const float t6[7] = {0, 0, 480, 240, 600, 120, 360};
-  if (gCyl <= 2) return (cyl <= 2) ? t2[cyl] : 0.0f;
-  if (gCyl == 3) return (cyl <= 3) ? t3[cyl] : 0.0f;
-  if (gCyl <= 4) return (cyl <= 4) ? t4[cyl] : 0.0f;
-  return (cyl >= 1 && cyl <= 6) ? t6[cyl] : 0.0f;
+/* Compression TDC on a 720° cycle. Slot 0 (cyl 1) is 0°. */
+float tdcDeg(uint8_t cyl)
+{
+  uint8_t n = gCyl;
+  if (n < 1) n = 1;
+  if (n > MAX_CYL) n = MAX_CYL;
+  float step = 720.0f / (float)n;
+  for (uint8_t s = 0; s < n; s++) {
+    if (cylAtSlot(s) == cyl)
+      return step * (float)s;
+  }
+  return 0.0f;
 }
 
-
-
-/*
- * Ignition sequential only when IGN mode = sequential AND CAM1 locked.
- * Else wasted spark (360°).
- */
+/* Sequential ignition only with cam home. Else wasted spark. */
 uint8_t ignSequentialActive(void)
 {
-  if (gIgnMode != 1)
-    return 0;
-  if (!camSynced)
-    return 0;
-  return 1;
-}
-
-/*
- * Injection sequential only when INJ mode requests it AND CAM1 locked.
- * Else split-batch fuel (360°).
- * Selecting sequential injection forces gCamMode = CAM1 home.
- */
-uint8_t injSequentialActive(void)
-{
-  if (gInjMode == 2 || gInjMode == 3) {
-    if (gCamMode == 0)
-      gCamMode = 1;
-  }
-  if (gInjMode == 1)
-    return 0; /* batch */
-  if (!camSynced)
-    return 0;
-  if (gInjMode == 2)
-    return 1;
-  if (gInjMode == 3) {
-    if (rpmLive >= gBatchAboveRpm) return 0;
-    return 1;
-  }
-  /* AUTO (0): follow ignition mode if cam locked */
   return (gIgnMode == 1 && camSynced) ? 1u : 0u;
 }
 
+/* Sequential injection only with cam home. Else batch. */
+uint8_t injSequentialActive(void)
+{
+  if (!camSynced)
+    return 0;
+  if (gInjMode == 2)
+    return 1u;
+  if (gInjMode == 3)
+    return (rpmLive < gBatchAboveRpm) ? 1u : 0u;
+  return 0;
+}
 
 /* ── Cam (720° phase) ───────────────────────────────────────── */
 
@@ -132,6 +117,7 @@ void ECU_UART_RxByte(uint8_t b) {
 
 
 void ECU_Init(void) {
+  ECU_Serial_Init();
   fpPrimeUntilMs = millis() + (uint32_t)gFpPrimeMs; /* fuel pump prime on power-up */
 
   /* Timer-triggered (TIM9) or continuous DMA ADC scan — see CUBEMX_ADC_DMA.md */
@@ -145,6 +131,15 @@ void ECU_Init(void) {
     g.Mode = GPIO_MODE_INPUT;
     g.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOB, &g); /* clutch switch */
+    /* VSS PC15 — input with pull-up; EXTI optional, software edge in serviceVss */
+    {
+      GPIO_InitTypeDef vg = {0};
+      __HAL_RCC_GPIOC_CLK_ENABLE();
+      vg.Pin = VSS_Pin;
+      vg.Mode = GPIO_MODE_INPUT;
+      vg.Pull = GPIO_PULLUP;
+      HAL_GPIO_Init(VSS_GPIO_Port, &vg);
+    }
   }
   for (int r = 0; r < BST_N; r++)
     for (int c = 0; c < BST_N; c++) {
@@ -159,7 +154,7 @@ void ECU_Init(void) {
     batAdcTbl[i] = batVoltTbl[i] / 11.0f / 3.3f * 4096.0f;
   }
   batCalReady = 1;
-  ECU_ApplyWheelId(9); /* V2.2 default 60-2+cam */
+  ECU_ApplyWheelId(9); /* default 60-2+cam */
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
@@ -180,9 +175,11 @@ void ECU_Init(void) {
   allOutputsOff();
 
   /* CRITICAL: arm crank/cam input-capture IRQs (PA0 TIM5, PA15 TIM2, PB4 TIM3) */
-  if (gWheelId == 0) gWheelId = 9;
-  ECU_ApplyWheelId(gWheelId);
   ECU_CrankCam_Start();
+
+  /* IWDG ~1 s — must be kicked from ECU_Loop / flash */
+  ECU_Watchdog_Init();
+  ECU_Watchdog_Kick();
 
   /* Restore maps + TPS cal from flash if present */
   {
@@ -220,6 +217,7 @@ void ECU_Init(void) {
         }
         /* else leave defaultMaps() values */
       }
+      ECU_Flash_ApplyExtras(&blob);
     }
   }
 }
@@ -227,57 +225,11 @@ void ECU_Init(void) {
 
 
 /* ---- lines 3981-4109 ---- */
-
-/* Bench output test: 500 ms each, RPM must stay 0 */
-static void serviceOutTest(void)
-{
-  if (!outTestActive) return;
-  if (rpmLive > 0 || syncLocked) {
-    /* abort if engine spins */
-    outTestActive = 0;
-    allOutputsOff();
-    return;
-  }
-  uint32_t now = millis();
-  if (now < outTestNextMs) return;
-
-  /* step 0.. : turn previous off, next on */
-  allOutputsOff();
-  /* 1..4 inj, 5..8 ign, 9 VVT1, 10 VVT2, 11 FP, 12 TACHO, 13 FAN, then done */
-  switch (outTestStep) {
-    case 0: break; /* start delay */
-    case 1: ECU_INJ_HI(1); break;
-    case 2: ECU_INJ_HI(2); break;
-    case 3: ECU_INJ_HI(3); break;
-    case 4: ECU_INJ_HI(4); break;
-    case 5: ECU_IGN_HI(1); break;
-    case 6: ECU_IGN_HI(2); break;
-    case 7: ECU_IGN_HI(3); break;
-    case 8: ECU_IGN_HI(4); break;
-    case 9: ECU_SetVVT(50, 0); break;   /* intake VVT ~50% */
-    case 10: ECU_SetVVT(0, 50); break;  /* exhaust VVT ~50% */
-    case 11: ECU_FP_HI(); fpOn = 1; break;
-    case 12: ECU_TACHO_HI(); break;
-    case 13: ECU_FAN_HI(); fanOn = 1; break;
-    default:
-      outTestActive = 0;
-      allOutputsOff();
-      uartWrite("OK:OUTTEST:DONE\r\n");
-      return;
-  }
-  outTestStep++;
-  outTestNextMs = now + 500U;
-}
-
 void ECU_Loop(void) {
-  serviceOutTest();
-#if defined(HAL_IWDG_MODULE_ENABLED)
-  extern IWDG_HandleTypeDef hiwdg;
-  HAL_IWDG_Refresh(&hiwdg);
-#endif
+  ECU_Watchdog_Kick();
   ECU_Serial_Service();
-  ECU_CrankPoll(); /* TIM5 CC1 if IRQ missed */
-  servicePendingSave(); /* flash SAVE queued by serial */
+  ECU_Persist_Service();
+  servicePendingSave(); /* flash SAVE queued by serial / auto-persist */
   /* Time-critical first: coils / injectors before slow ADC & closed-loop */
   scheduleCoils(micros());
   serviceInjection();
@@ -291,19 +243,75 @@ void ECU_Loop(void) {
   float injMs;
   lookupMaps(load, (float)rpmLive, &adv, &injMs);
   ignAdvanceDeg = computeIgnitionAdvance(adv);
+  {
+    int8_t a = ignAdvanceDeg;
+    if (a > gMaxAdvDeg) a = gMaxAdvDeg;
+    if (a < -(int8_t)gMaxRetDeg) a = (int8_t)(-gMaxRetDeg);
+    ignAdvanceDeg = a;
+  }
   serviceAfterStart();
-  float pw = injMs * 1000.0f * o2FuelMul() * coldStartEnrichMul()
-           * afterStartMul() * alsFuelMul();
-  if (pw < 800) pw = 800;
-  if (pw > 20000) pw = 20000;
+  /* Fuel: direct ms map, or VE% → base PW from MAP/IAT/reqFuel */
+  float pw;
+  if (gVeMode) {
+    float ve = injMs; /* lookup returned VE % when gVeMode */
+    if (ve < 0.0f) ve = 0.0f;
+    if (ve > 150.0f) ve = 150.0f;
+    float mapAbs = engMap;
+    if (mapAbs < 20.0f) mapAbs = 20.0f;
+    float iatK = engIat + 273.15f;
+    if (iatK < 250.0f) iatK = 250.0f;
+    /* Ideal-gas style density vs 100 kPa / 293 K reference */
+    float dens = (mapAbs / 100.0f) * (293.15f / iatK);
+    float baseMs = gReqFuelMs * (ve / 100.0f) * dens;
+    /* Optional scale by injector size vs nominal 220 cc/min */
+    {
+      float pAct = gFuelPressureBar;
+      float pRat = gFuelPressureRatedBar;
+      if (pAct < 0.5f) pAct = 0.5f;
+      if (pRat < 0.5f) pRat = 0.5f;
+      float flowEff = gInjFlowCcMin;
+      if (flowEff < 10.0f) flowEff = 10.0f;
+      /* flow ∝ √(P_rail / P_rated) */
+      flowEff *= sqrtf(pAct / pRat);
+      baseMs *= (220.0f / flowEff);
+    }
+    pw = baseMs * 1000.0f * o2FuelMul() * coldStartEnrichMul()
+       * afterStartMul() * alsFuelMul() * accelEnrichMul();
+  } else {
+    pw = injMs * 1000.0f * o2FuelMul() * coldStartEnrichMul()
+       * afterStartMul() * alsFuelMul() * accelEnrichMul();
+  }
+  if (launchDecayActive && launchDecayFuelPct > 0.1f) {
+    pw *= (1.0f + launchDecayFuelPct * 0.01f);
+  }
+  if (pw < 400) pw = 400; /* min injection 400 us */
+  {
+    float mxUs = gMaxInjMs * 1000.0f;
+    if (mxUs < 1000.0f) mxUs = 1000.0f;
+    if (mxUs > 30000.0f) mxUs = 30000.0f;
+    if (pw > mxUs) pw = mxUs;
+  }
   if (dfcoActive)
     pw = 0; /* deceleration fuel cut */
   injPwUs = (uint16_t)pw;
 
-  if (lastToothUs != 0 && (micros() - lastToothUs) > 2000000UL) {
-    /* 2 s without any accepted tooth = stalled */
+  /* RPM hold: if no tooth for 200 ms, force RPM to 0 (stops slow coast-up) */
+  if (lastToothUs != 0 && (micros() - lastToothUs) > 200000UL) {
+    if (rpmLive != 0) {
+      rpmLive = 0;
+      kf_rpm = 0.0f;
+      kf_acc = 0.0f;
+    }
+  }
+  if (lastToothUs != 0 && (micros() - lastToothUs) > 500000UL) {
+    /* 0.5 s without accepted tooth = stalled / unlock */
     if (syncLocked) syncLosses++;
     syncLocked = 0;
+    crankPllState = CRANK_PLL_SEEK;
+    gapConfirm = 0;
+    pllSoftErr = 0;
+    missedGapStreak = 0;
+    missedGapArmed = 0;
     rpmLive = 0;
     toothPeriodUs = 0;
     toothPeriodFilt = 0;
@@ -317,33 +325,32 @@ void ECU_Loop(void) {
   }
   /* Cam hysteresis unlock:
    * - Engine stopped (no crank > 2 s): clear immediately with crank stall path
-   * - Running: cam home arrives once per cam rev (2 crank revs), so only
-   *   judge its absence over CAM_HOME_CHECK_REVS crank revolutions. A single
-   *   filtered/noisy edge then can never drop 720° phase; the old code
-   *   incremented the miss counter once per ECU_Loop pass, which unlocked
-   *   sequential almost immediately after one late edge.
+   * - Running: require ~3 consecutive missed cam windows before unlock
+   *   Expected cam period ≈ 1-2 crank revolutions
    */
   {
     uint32_t nowu = micros();
-    uint32_t crankRevUs = 200000UL;
+    uint32_t expCam = 200000UL;
     if (toothPeriodUs > 0 && gTeeth >= 2) {
-      crankRevUs = toothPeriodUs * (uint32_t)gTeeth;
-      if (crankRevUs < 15000UL) crankRevUs = 15000UL;
-      if (crankRevUs > 500000UL) crankRevUs = 500000UL;
+      expCam = toothPeriodUs * (uint32_t)gTeeth; /* ~1 rev */
+      if (expCam < 30000UL) expCam = 30000UL;
+      if (expCam > 500000UL) expCam = 500000UL;
     }
-    uint32_t camTimeout = crankRevUs * CAM_HOME_CHECK_REVS;
-    if (camTimeout < 80000UL) camTimeout = 80000UL;
+    /* unlock threshold = 2.5 × expected (missed edges) */
+    uint32_t camTimeout = (expCam * 5UL) / 2UL;
 
-    /* Expire edge indicator ~150 ms after last cam edge */
-  if (camPulseSeen && lastCamEdgeUs && (micros() - lastCamEdgeUs) > 150000UL)
-    camPulseSeen = 0;
-  if (camSynced) {
+    if (camSynced) {
       if (lastCamEdgeUs == 0)
         lastCamEdgeUs = nowu;
       if ((nowu - lastCamEdgeUs) > camTimeout) {
-        camSynced = 0;
-        camLockHits = 0;
-        camUnlockMiss = 0;
+        if (camUnlockMiss < 255)
+          camUnlockMiss++;
+        /* Leave soft: need 5 consecutive timeout ticks OR 4× expected period */
+        if (camUnlockMiss >= 5 || (nowu - lastCamEdgeUs) > (camTimeout * 4UL)) {
+          camSynced = 0;
+          camLockHits = 0;
+          camUnlockMiss = 0;
+        }
       } else {
         camUnlockMiss = 0;
       }
@@ -357,9 +364,13 @@ void ECU_Loop(void) {
       if (lastCam2EdgeUs == 0)
         lastCam2EdgeUs = nowu;
       if ((nowu - lastCam2EdgeUs) > camTimeout) {
-        cam2Synced = 0;
-        cam2LockHits = 0;
-        cam2UnlockMiss = 0;
+        if (cam2UnlockMiss < 255)
+          cam2UnlockMiss++;
+        if (cam2UnlockMiss >= 5 || (nowu - lastCam2EdgeUs) > (camTimeout * 4UL)) {
+          cam2Synced = 0;
+          cam2LockHits = 0;
+          cam2UnlockMiss = 0;
+        }
       } else {
         cam2UnlockMiss = 0;
       }
@@ -369,30 +380,9 @@ void ECU_Loop(void) {
   float v = engBat;
   if (v < 8) v = 8;
   if (v > 16) v = 16;
-  /* Coil charge: 0=constant duty (smart default), 1=constant time (dumb) */
-  float dus;
-  if (gCoilChargeMode == 0) {
-    /* Constant duty: <300 RPM → 60%, >500 RPM → max 40%, else ramp */
-    float duty;
-    if (rpmLive < 300u) duty = 0.60f;
-    else if (rpmLive < 500u) {
-      float t = (float)(rpmLive - 300u) / 200.0f;
-      duty = 0.60f - t * 0.20f; /* 60% → 40% */
-    } else duty = 0.40f;
-    /* sparks per crank rev: 4-cyl wasted/seq ≈ 2 */
-    uint8_t spr = (gCyl >= 2) ? (uint8_t)(gCyl / 2u) : 1u;
-    if (spr < 1) spr = 1;
-    float periodUs = 0.0f;
-    if (rpmLive >= 50u)
-      periodUs = 60000000.0f / (float)rpmLive / (float)spr;
-    dus = duty * periodUs;
-  } else {
-    /* Constant charge time, battery-compensated */
-    dus = (float)CFG_DWELL_NOM_US * (14.0f / v);
-  }
-  if (dus < (float)CFG_DWELL_MIN_US) dus = (float)CFG_DWELL_MIN_US;
-  if (dus > (float)CFG_DWELL_MAX_US) dus = (float)CFG_DWELL_MAX_US; /* hard 8 ms */
-  /* Below 300 RPM still allow up to 8 ms but duty path already set 60% */
+  float dus = (float)CFG_DWELL_NOM_US * (14.0f / v);
+  if (dus < CFG_DWELL_MIN_US) dus = CFG_DWELL_MIN_US;
+  if (dus > CFG_DWELL_MAX_US) dus = CFG_DWELL_MAX_US;
   dwellTargetUs = (uint16_t)dus;
 
   serviceO2ClosedLoop();
@@ -402,8 +392,9 @@ void ECU_Loop(void) {
   serviceIdleControl();
   serviceVvtClosedLoop();
   serviceDfco();
+  serviceAccelEnrich();
   serviceETB();
-  serviceKnockGoertzel();
+  serviceVss();
   serviceMotorsport();
   serviceBoost();
   serviceOutputs();
@@ -411,9 +402,9 @@ void ECU_Loop(void) {
 
   static uint32_t lastTel = 0;
   uint32_t now_ms = millis();
-  if (mapDumpBusy && (now_ms - lastTel) > 3000U)
+  if (mapDumpBusy && (now_ms - lastTel) > 1500U)
     mapDumpBusy = 0;
-  if (!mapDumpBusy && (now_ms - lastTel) >= 100U) {
+  if (!mapDumpBusy && (now_ms - lastTel) >= 50U) /* ~20 Hz — less USB TX pressure */ {
     lastTel = now_ms;
     sendTelemetry();
   }

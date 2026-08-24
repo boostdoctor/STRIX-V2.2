@@ -23,10 +23,19 @@ int clampi(int a, int lo, int hi) {
 
 /* millis/micros are static inline in ecu_runtime.h */
 
-int8_t clampAdv(int v) { return (int8_t)clampi(v, -10, 45); }
+int8_t clampAdv(int v) {
+  int lo = -(int)gMaxRetDeg;
+  int hi = (int)gMaxAdvDeg;
+  if (lo < -30) lo = -30;
+  if (hi > 60) hi = 60;
+  return (int8_t)clampi(v, lo, hi);
+}
 uint8_t clampInj(float ms) {
+  float mx = gMaxInjMs;
+  if (mx < 1.0f) mx = 1.0f;
+  if (mx > 30.0f) mx = 30.0f;
   if (ms < 0) ms = 0;
-  if (ms > 20) ms = 20;
+  if (ms > mx) ms = mx;
   return (uint8_t)(ms * 10.0f + 0.5f);
 }
 

@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stddef.h>
 
+__attribute__((weak)) void ECU_Watchdog_Kick(void) {}
+
 /* Fallbacks if an older ecu_flash.h is still on the include path */
 #ifndef ECU_NVM_BASE_512K
 #define ECU_NVM_BASE_512K   0x08060000u
@@ -21,7 +23,10 @@
 #define ECU_FLASH_MAGIC     0xECAF4110u
 #endif
 #ifndef ECU_FLASH_VERSION
-#define ECU_FLASH_VERSION   9u
+#define ECU_FLASH_VERSION   10u
+#endif
+#ifndef ECU_FLASH_V9_BODY
+#define ECU_FLASH_V9_BODY   offsetof(EcuFlashBlob, vvtIn)
 #endif
 
 _Static_assert(sizeof(EcuFlashBlob) < 4096u, "blob too large");
@@ -176,6 +181,19 @@ static int flash_program_blob(const EcuFlashBlob *blob)
   er.Banks        = FLASH_BANK_1;
 #endif
 
+#if defined(HAL_IWDG_MODULE_ENABLED)
+  {
+    extern IWDG_HandleTypeDef hiwdg;
+    HAL_IWDG_Refresh(&hiwdg);
+  }
+#endif
+#ifdef ECU_WATCHDOG_H
+  /* kicked below if header included from this file */
+#endif
+  {
+    extern void ECU_Watchdog_Kick(void);
+    ECU_Watchdog_Kick();
+  }
   if (HAL_FLASHEx_Erase(&er, &sectorError) != HAL_OK) {
     flash_clear_flags();
     cache_on();
@@ -197,6 +215,10 @@ static int flash_program_blob(const EcuFlashBlob *blob)
     else if (n > 0u)
       memcpy(&word, bytes + off, n);
 
+    if ((w & 31u) == 0u) {
+      extern void ECU_Watchdog_Kick(void);
+      ECU_Watchdog_Kick();
+    }
     if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, base + (uint32_t)off, word) != HAL_OK) {
       flash_clear_flags();
       cache_on();
@@ -224,16 +246,21 @@ static int flash_byte_verify(const EcuFlashBlob *blob)
   return 0;
 }
 
+static size_t flash_body_len(uint16_t ver)
+{
+  if (ver >= 10u)
+    return offsetof(EcuFlashBlob, crc32);
+  return (size_t)ECU_FLASH_V9_BODY;
+}
+
 static int flash_crc_verify(void)
 {
   const EcuFlashBlob *p = (const EcuFlashBlob *)(uintptr_t)sector_addr();
   if (p->magic != ECU_FLASH_MAGIC)
     return -6;
-  /* Accept v4–v6; all use software CRC-32 for crc32 field.
-   * v5 HW-CRC blobs will fail CRC and fall through to defaults. */
   if (p->version < 4u || p->version > ECU_FLASH_VERSION)
     return -6;
-  uint32_t expect = ECU_Flash_CrcBuffer(p, offsetof(EcuFlashBlob, crc32));
+  uint32_t expect = ECU_Flash_CrcBuffer(p, flash_body_len(p->version));
   if (expect != p->crc32)
     return -6;
   return 0;
@@ -256,12 +283,17 @@ int ECU_Flash_Load(EcuFlashBlob *out)
 {
   if (!out)
     return 0;
-  if (!ECU_Flash_Present())
-    return 0;
   const EcuFlashBlob *p = (const EcuFlashBlob *)(uintptr_t)sector_addr();
-  memcpy(out, p, sizeof(*out));
-  if (ECU_Flash_CrcCalc(out) != out->crc32)
+  if (p->magic != ECU_FLASH_MAGIC)
     return 0;
+  if (p->version < 4u || p->version > ECU_FLASH_VERSION)
+    return 0;
+  memset(out, 0, sizeof(*out));
+  if (p->version >= 10u)
+    memcpy(out, p, sizeof(*out));
+  else
+    memcpy(out, p, (size_t)ECU_FLASH_V9_BODY);
+  out->version = p->version;
   return 1;
 }
 
