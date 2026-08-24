@@ -1,0 +1,31 @@
+/* Example: windowed knock energy via Goertzel (not compiled — reference)
+ *
+ * #include "ecu_goertzel.h"
+ *
+ * #define KNOCK_N    64
+ * #define KNOCK_FS   50000.0f   // ADC sample rate in window
+ * #define KNOCK_F0   7000.0f    // ~7 kHz resonant target
+ *
+ * static GoertzelState knockGz;
+ * static float knockBuf[KNOCK_N];
+ * static uint16_t knockIdx;
+ *
+ * void Knock_WindowStart(void) {
+ *   Goertzel_Init(&knockGz, KNOCK_N, KNOCK_FS, KNOCK_F0);
+ *   Goertzel_Reset(&knockGz);
+ *   knockIdx = 0;
+ * }
+ *
+ * void Knock_PushAdc(uint16_t adc) {
+ *   if (knockIdx >= KNOCK_N) return;
+ *   float s = (float)adc;           // ideally remove bias ~2048
+ *   knockBuf[knockIdx++] = s;
+ *   Goertzel_Push(&knockGz, s - 2048.0f);
+ * }
+ *
+ * float Knock_EndPower(void) {
+ *   if (knockIdx < KNOCK_N / 2) return 0.0f;
+ *   return Goertzel_Power(&knockGz);
+ *   // if power > threshold(rpm) → apply ignition retard
+ * }
+ */
