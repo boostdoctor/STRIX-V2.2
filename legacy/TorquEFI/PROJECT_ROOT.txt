@@ -1,0 +1,16 @@
+TorquEFI project root: artifacts/TorquEFI/
+
+Key paths:
+  tuner/ecu_tuner_aligned.py
+  tuner/engine_setup_tool.py
+  stm32/Core/Src/ecu_app.c          (EOI injection + sequential)
+  stm32/Core/Src/ecu_serial.c
+  stm32/Core/Inc/ecu_wheels.h
+  stm32/Core/Inc/ecu_config.h        (CFG_EOI_BTDC_DEG)
+  stm32/Core/Inc/ecu_pins.h
+  docs/WHEEL_PROFILES.md
+  docs/CDC_RX_DEBUG.md
+  docs/IMPORT_CUBEIDE.md
+  docs/PINOUT.md
+
+STRIX patches: artifacts/STRIX_patched.zip

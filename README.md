@@ -44,3 +44,7 @@ Pinout: see `STRIX_V2_BlackPill_Pinout.pdf`.
 ## License / project
 
 Maintained as **STRIX V2.2** — https://github.com/boostdoctor/STRIX-V2.2
+
+## Legacy (archived)
+
+Pre–STRIX V2.2 development (TorquEFI, Arduino sketch, early STM32) lives under [`legacy/`](legacy/). See `legacy/README.md`. Not for new flashes.

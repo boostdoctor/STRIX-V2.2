@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>TorquEFI Dash</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: radial-gradient(ellipse at center, #121820 0%, #06080c 70%);
+    color: #e0e8f0;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    user-select: none;
+  }
+  #hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 20px; height: 36px;
+    border-bottom: 1px solid #1a2434;
+  }
+  #brand { letter-spacing: 6px; color: #4a6080; font-size: 12px; font-weight: 700; }
+  #status span { margin-left: 14px; font-size: 12px; font-weight: 700; }
+  #ok { color: #33ee88; } #bad { color: #ff4466; } #dim { color: #445566; }
+  #grid {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr;
+    grid-template-rows: 1.2fr 1fr;
+    gap: 10px;
+    padding: 10px;
+    height: calc(100% - 36px);
+  }
+  .gauge-box {
+    position: relative;
+    background: linear-gradient(160deg, #141c28 0%, #0c1018 100%);
+    border: 1px solid #243044;
+    border-radius: 14px;
+    overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .gauge-box.hero { grid-row: 1 / 3; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .label {
+    position: absolute; bottom: 10px; left: 0; right: 0;
+    text-align: center; font-size: 11px; letter-spacing: 3px;
+    color: #5a6e88; font-weight: 700; pointer-events: none;
+  }
+  .readout {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, 10%);
+    font-size: clamp(18px, 3.5vw, 42px); font-weight: 800;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+    text-shadow: 0 0 12px rgba(0,0,0,0.8);
+  }
+  .hero .readout { font-size: clamp(36px, 7vw, 84px); transform: translate(-50%, 20%); }
+</style>
+</head>
+<body>
+  <div id="hdr">
+    <div id="brand">TORQUEFI · WEBGL DASH</div>
+    <div id="status">
+      <span id="sync">○ SYNC</span>
+      <span id="cam">○ CAM</span>
+    </div>
+  </div>
+  <div id="grid">
+    <div class="gauge-box hero" id="box-rpm"><canvas id="c-rpm"></canvas><div class="readout" id="v-rpm">—</div><div class="label">RPM</div></div>
+    <div class="gauge-box" id="box-tps"><canvas id="c-tps"></canvas><div class="readout" id="v-tps">—</div><div class="label">TPS %</div></div>
+    <div class="gauge-box" id="box-map"><canvas id="c-map"></canvas><div class="readout" id="v-map">—</div><div class="label">MAP kPa</div></div>
+    <div class="gauge-box" id="box-ign"><canvas id="c-ign"></canvas><div class="readout" id="v-ign">—</div><div class="label">IGN °</div></div>
+    <div class="gauge-box" id="box-afr"><canvas id="c-afr"></canvas><div class="readout" id="v-afr">—</div><div class="label">AFR</div></div>
+    <div class="gauge-box" id="box-inj"><canvas id="c-inj"></canvas><div class="readout" id="v-inj">—</div><div class="label">INJ ms</div></div>
+    <div class="gauge-box" id="box-vvt1"><canvas id="c-vvt1"></canvas><div class="readout" id="v-vvt1">—</div><div class="label">VVT IN</div></div>
+  </div>
+<script>
+/* WebGL dial renderer — arc gauge on GL canvas */
+function createGauge(canvas, opts) {
+  const gl = canvas.getContext("webgl", { antialias: true, alpha: true });
+  if (!gl) return createCanvas2dFallback(canvas, opts);
+
+  const vs = `
+    attribute vec2 a;
+    void main(){ gl_Position = vec4(a, 0.0, 1.0); }
+  `;
+  const fs = `
+    precision mediump float;
+    uniform vec2 u_res;
+    uniform float u_val;   // 0..1
+    uniform vec3 u_col;
+    uniform float u_redline;
+    void main(){
+      vec2 uv = (gl_FragCoord.xy / u_res) * 2.0 - 1.0;
+      uv.x *= u_res.x / u_res.y;
+      float r = length(uv);
+      float ang = atan(uv.y, uv.x); // -pi..pi
+      // map dial: -220deg to +40deg in math angles → sweep
+      float start = radians(-220.0);
+      float end   = radians(40.0);
+      float span  = end - start;
+      float a = ang;
+      // normalize to start..end
+      float t = (a - start) / span;
+      float ring = smoothstep(0.02, 0.0, abs(r - 0.72));
+      float inArc = step(0.0, t) * step(t, 1.0);
+      float filled = step(t, u_val) * inArc;
+      vec3 bg = vec3(0.08, 0.10, 0.14);
+      vec3 col = mix(u_col, vec3(1.0, 0.25, 0.2), step(u_redline, t));
+      vec3 c = bg;
+      c = mix(c, vec3(0.18, 0.22, 0.28), ring * inArc * 0.9);
+      c = mix(c, col, ring * filled);
+      // inner hub
+      float hub = smoothstep(0.18, 0.12, r);
+      c = mix(c, vec3(0.06, 0.08, 0.10), hub);
+      // needle
+      float nAng = start + u_val * span;
+      vec2 nd = vec2(cos(nAng), sin(nAng));
+      float ndist = abs(uv.x * nd.y - uv.y * nd.x);
+      float along = dot(uv, nd);
+      float needle = smoothstep(0.02, 0.0, ndist) * step(0.0, along) * step(along, 0.68);
+      c = mix(c, vec3(0.95, 0.95, 0.98), needle);
+      float alpha = 1.0;
+      gl_FragColor = vec4(c, alpha);
+    }
+  `;
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1,-1, 1,-1, -1,1, 1,1
+  ]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, "a");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const uRes = gl.getUniformLocation(prog, "u_res");
+  const uVal = gl.getUniformLocation(prog, "u_val");
+  const uCol = gl.getUniformLocation(prog, "u_col");
+  const uRed = gl.getUniformLocation(prog, "u_redline");
+
+  let value = 0, target = 0;
+  function resize() {
+    const r = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * r; canvas.height = h * r;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n>>16)/255, ((n>>8)&255)/255, (n&255)/255];
+  }
+  const col = hexToRgb(opts.color || "#ffcc00");
+  function frame() {
+    value += (target - value) * 0.18;
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uVal, Math.max(0, Math.min(1, value)));
+    gl.uniform3f(uCol, col[0], col[1], col[2]);
+    gl.uniform1f(uRed, opts.redline != null ? opts.redline : 0.85);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(frame);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+  requestAnimationFrame(frame);
+  return {
+    set(v) { target = (v - opts.min) / (opts.max - opts.min); }
+  };
+}
+
+function createCanvas2dFallback(canvas, opts) {
+  const ctx = canvas.getContext("2d");
+  let value = 0, target = 0;
+  function resize() {
+    const r = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * r;
+    canvas.height = canvas.clientHeight * r;
+  }
+  function frame() {
+    value += (target - value) * 0.18;
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    const cx = w/2, cy = h*0.55, rad = Math.min(w,h)*0.38;
+    const start = -Math.PI*1.25, span = Math.PI*1.5;
+    ctx.lineWidth = rad*0.12;
+    ctx.strokeStyle = "#1a2230";
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, start, start+span);
+    ctx.stroke();
+    ctx.strokeStyle = opts.color || "#ffcc00";
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, start, start + span * value);
+    ctx.stroke();
+    const ang = start + span * value;
+    ctx.strokeStyle = "#eee";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(ang)*rad*0.85, cy + Math.sin(ang)*rad*0.85);
+    ctx.stroke();
+    requestAnimationFrame(frame);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+  requestAnimationFrame(frame);
+  return {
+    set(v) {
+      target = Math.max(0, Math.min(1, (v - opts.min) / (opts.max - opts.min)));
+    }
+  };
+}
+
+const gauges = {
+  rpm:  createGauge(document.getElementById("c-rpm"),  { min:0, max:8000, color:"#ffd000", redline:0.82 }),
+  tps:  createGauge(document.getElementById("c-tps"),  { min:0, max:100,  color:"#6dffb0" }),
+  map:  createGauge(document.getElementById("c-map"),  { min:0, max:250,  color:"#5ec0ff" }),
+  ign:  createGauge(document.getElementById("c-ign"),  { min:-15, max:45, color:"#5eb8ff" }),
+  afr:  createGauge(document.getElementById("c-afr"),  { min:10, max:18,  color:"#ff8fd0" }),
+  inj:  createGauge(document.getElementById("c-inj"),  { min:0, max:20,   color:"#5aff9a" }),
+  vvt1: createGauge(document.getElementById("c-vvt1"), { min:0, max:100,  color:"#c0a0ff" }),
+};
+
+function afrFromO2(v) {
+  if (v <= 0.01) return 14.7;
+  return Math.max(10, Math.min(22, 18 - (v/0.9)*6));
+}
+
+/** Called from Qt: updateDash({rpm,tps,map,...}) */
+function updateDash(d) {
+  const rpm = d.rpm|0;
+  const tps = d.tps|0;
+  const map = +d.map || 0;
+  const ign = +d.ign || 0;
+  let inj = +d.pw || +d.inj || 0;
+  if (inj > 100) inj *= 0.001;
+  const afr = d.afr != null ? +d.afr : afrFromO2(+d.o2 || 0);
+  const vvt1 = +d.vvt1 || 0;
+  gauges.rpm.set(rpm);  document.getElementById("v-rpm").textContent = rpm;
+  gauges.tps.set(tps);  document.getElementById("v-tps").textContent = tps;
+  gauges.map.set(map);  document.getElementById("v-map").textContent = map.toFixed(1);
+  gauges.ign.set(ign);  document.getElementById("v-ign").textContent = ign.toFixed(0);
+  gauges.afr.set(afr);  document.getElementById("v-afr").textContent = afr.toFixed(1);
+  gauges.inj.set(inj);  document.getElementById("v-inj").textContent = inj.toFixed(2);
+  gauges.vvt1.set(vvt1); document.getElementById("v-vvt1").textContent = vvt1.toFixed(0);
+  const sync = d.sync|0, cam = d.cam|0;
+  const s = document.getElementById("sync");
+  const c = document.getElementById("cam");
+  s.textContent = sync ? "● SYNC" : "○ SYNC";
+  c.textContent = cam ? "● CAM" : "○ CAM";
+  s.style.color = sync ? "#33ee88" : "#ff4466";
+  c.style.color = cam ? "#33ee88" : "#445566";
+}
+</script>
+</body>
+</html>
