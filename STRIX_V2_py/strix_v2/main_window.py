@@ -671,7 +671,11 @@ class MainWindow(QMainWindow):
         return float(self.live.get("map") or 0)
 
     def _refresh_ui(self):
-        self.strip.update_live(self.live)
+        self.strip.update_live(
+            self.live,
+            map_kpa_max=self.engine.get("map_kpa_max") or 240,
+            load_mode=self.engine.get("load_mode") or "MAP",
+        )
         rpm = float(self.live.get("rpm") or 0)
         load = self._live_load_for_maps()
         self.map_ign.set_live(rpm, load)

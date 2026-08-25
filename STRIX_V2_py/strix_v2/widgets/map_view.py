@@ -65,13 +65,25 @@ class _Canvas(QWidget):
         ch = gh / v.rows
         font = QFont("Segoe UI", 9, QFont.Bold)
         p.setFont(font)
+        # Heatmap scale tracks current cell values
+        data_max = 0.0
+        for rr in range(v.rows):
+            for cc in range(v.cols):
+                av = abs(float(v.table[rr][cc]))
+                if av > data_max:
+                    data_max = av
+        if data_max < 1e-6:
+            data_max = 1.0
+        vmax_live = data_max * 1.08
+        if abs(vmax_live - v.vmax) > 0.05 * max(v.vmax, 1.0):
+            v.vmax = vmax_live
         # cells — data row r; visual row may be inverted (high load at top)
         for r in range(v.rows):
             vr = v._data_to_vis(r)
             for c in range(v.cols):
                 val = float(v.table[r][c])
                 rect = QRectF(left + c * cw, top + vr * ch, cw - 1, ch - 1)
-                p.fillRect(rect, _heat(val, v.vmax, v.kind))
+                p.fillRect(rect, _heat(val, vmax_live, v.kind))
                 if (r, c) in v.dirty:
                     p.setPen(QPen(QColor("#ffcc00"), 2))
                     p.drawRect(rect.adjusted(1, 1, -1, -1))
@@ -206,7 +218,7 @@ class MapView(QWidget):
         self._live_hold = 0
         self.snap_live = True
         self.trail: list[tuple[int, int]] = []
-        self._trail_max = 50
+        self._trail_max = 10
         self._clip = None  # copy buffer
 
         root = QVBoxLayout(self)
@@ -236,7 +248,7 @@ class MapView(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
 
     def _update_legend(self):
-        self.legend.setText(f"Scale 0 → {self.vmax:g}  |  cyan=live  |  trail=last 50  |  Arrows select  |  +/- or PgUp/Dn  |  Shift×5  |  Ctrl+C/V  |  Ctrl+P %")
+        self.legend.setText(f"Scale 0 → {self.vmax:g}  |  cyan=live  |  trail=last 10  |  Arrows select  |  +/- or PgUp/Dn  |  Shift×5  |  Ctrl+C/V  |  Ctrl+P %")
 
     def set_load_bins(self, bins, label="MAP"):
         self.load_bins = [float(b) for b in list(bins)[: self.rows]]
@@ -275,9 +287,24 @@ class MapView(QWidget):
         for r in range(min(self.rows, len(data))):
             for c in range(min(self.cols, len(data[r]))):
                 self.table[r][c] = data[r][c]
+        self._auto_vmax()
         if mark_clean:
             self.mark_clean()
         self._canvas.update()
+
+    def _auto_vmax(self):
+        """Scale heatmap to the values currently displayed on the map."""
+        mx = 0.0
+        for r in range(self.rows):
+            for c in range(self.cols):
+                v = abs(float(self.table[r][c]))
+                if v > mx:
+                    mx = v
+        if mx < 1e-6:
+            mx = 1.0
+        # small headroom so max cell is not pure top-of-scale wash
+        self.vmax = mx * 1.08
+        self._update_legend()
 
     def mark_clean(self):
         self.baseline = [row[:] for row in self.table]

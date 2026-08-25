@@ -89,21 +89,31 @@ class LiveStrip(QFrame):
     def set_optional(self, keys: set[str] | list[str]):
         self._optional_keys = set(keys)
 
-    def update_live(self, live: dict):
+    def update_live(self, live: dict, map_kpa_max: float | int | None = None,
+                    load_mode: str | None = None):
         rpm = int(live.get("rpm") or 0)
         ect = float(live.get("ect") or 0)
         sync = int(live.get("sync") or 0)
         cam_on = int(float(live.get("cam") or live.get("camsync") or 0))
 
         self.cells["rpm"].set_value(f"{rpm}")
-        self.cells["tps"].set_value(f"{float(live.get('tps') or 0):.0f}%")
-        self.cells["map"].set_value(f"{int(round(float(live.get('map') or 0)))}")
-        # Firmware LOAD is normalised (0.2–2.4); show as % of ref for readability
-        ld = float(live.get("load") or 0)
-        if 0.0 < ld < 5.0:
-            self.cells["load"].set_value(f"{ld * 100.0:.0f}%")
+        tps = float(live.get("tps") or 0)
+        self.cells["tps"].set_value(f"{tps:.0f}%")
+        map_kpa = float(live.get("map") or 0)
+        self.cells["map"].set_value(f"{int(round(map_kpa))}")
+        # Engine load % of selected MAP sensor full-scale (or TPS in Alpha-N)
+        lm = (load_mode or "").upper()
+        if lm in ("TPS", "ALPHA-N", "ALPHA_N"):
+            load_pct = max(0.0, min(120.0, tps))
         else:
-            self.cells["load"].set_value(f"{int(round(ld))}")
+            mx = float(map_kpa_max) if map_kpa_max and float(map_kpa_max) > 20 else 240.0
+            load_pct = 100.0 * map_kpa / mx
+            if load_pct < 0.0:
+                load_pct = 0.0
+            # allow >100% on overboost beyond scale
+            if load_pct > 200.0:
+                load_pct = 200.0
+        self.cells["load"].set_value(f"{load_pct:.0f}%")
         self.cells["sync"].set_value(
             "LOCK" if sync else "—",
             "#55ff99" if sync else "#ff7777",
