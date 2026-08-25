@@ -65,11 +65,12 @@ class _Canvas(QWidget):
         ch = gh / v.rows
         font = QFont("Segoe UI", 9, QFont.Bold)
         p.setFont(font)
-        # cells
+        # cells — data row r; visual row may be inverted (high load at top)
         for r in range(v.rows):
+            vr = v._data_to_vis(r)
             for c in range(v.cols):
                 val = float(v.table[r][c])
-                rect = QRectF(left + c * cw, top + r * ch, cw - 1, ch - 1)
+                rect = QRectF(left + c * cw, top + vr * ch, cw - 1, ch - 1)
                 p.fillRect(rect, _heat(val, v.vmax, v.kind))
                 if (r, c) in v.dirty:
                     p.setPen(QPen(QColor("#ffcc00"), 2))
@@ -83,7 +84,7 @@ class _Canvas(QWidget):
                 txt = f"{int(val)}" if v.kind in ("ign", "vvt") else f"{val:.1f}"
                 p.setPen(QColor("#ffffff"))
                 p.drawText(rect, Qt.AlignCenter, txt)
-        # live trail (oldest → newest fade)
+        # live trail (data indices)
         trail = getattr(v, "trail", None) or []
         ntr = len(trail)
         for i, (tr, tc) in enumerate(trail):
@@ -91,28 +92,30 @@ class _Canvas(QWidget):
                 continue
             age = (i + 1) / max(1, ntr)
             alpha = int(40 + 140 * age)
-            rr = QRectF(left + tc * cw, top + tr * ch, cw - 1, ch - 1)
+            vr = v._data_to_vis(tr)
+            rr = QRectF(left + tc * cw, top + vr * ch, cw - 1, ch - 1)
             p.setPen(QPen(QColor(0, 200, 255, alpha), 1))
             p.setBrush(QColor(0, 180, 220, int(18 + 40 * age)))
             p.drawRect(rr)
-        # live crosshair (current cell)
+        # live crosshair
         if 0 <= v.live_r < v.rows and 0 <= v.live_c < v.cols:
-            lr = QRectF(left + v.live_c * cw, top + v.live_r * ch, cw - 1, ch - 1)
-            p.setPen(QPen(QColor("#00ffcc"), 3))
+            vr = v._data_to_vis(v.live_r)
+            lr = QRectF(left + v.live_c * cw, top + vr * ch, cw - 1, ch - 1)
+            p.setPen(QPen(QColor("#00ffff"), 3))
             p.drawRect(lr.adjusted(-1, -1, 1, 1))
-            p.setPen(QPen(QColor("#00ffcc"), 1, Qt.DashLine))
+            p.setPen(QPen(QColor(0, 255, 255, 180), 1, Qt.DashLine))
             p.drawLine(int(lr.center().x()), top, int(lr.center().x()), top + gh)
             p.drawLine(left, int(lr.center().y()), left + gw, int(lr.center().y()))
-        # axis labels (fixed)
-        p.setPen(QColor("#e8eef8"))
-        af = QFont("Segoe UI", 8)
-        p.setFont(af)
+        # axis labels
+        p.setPen(QColor("#aaccff"))
+        p.setFont(QFont("Segoe UI", 8))
         for c in range(v.cols):
             lab = str(int(v.rpm_bins[c])) if c < len(v.rpm_bins) else str(c)
             p.drawText(QRectF(left + c * cw, 2, cw, top - 2), Qt.AlignCenter, lab)
         for r in range(v.rows):
+            vr = v._data_to_vis(r)
             lab = str(int(v.load_bins[r])) if r < len(v.load_bins) else str(r)
-            p.drawText(QRectF(2, top + r * ch, left - 4, ch), Qt.AlignCenter, lab)
+            p.drawText(QRectF(2, top + vr * ch, left - 4, ch), Qt.AlignCenter, lab)
         p.drawText(QRectF(2, h - bot + 4, 40, 16), Qt.AlignLeft, v.load_label)
         p.drawText(QRectF(left, h - bot + 4, 80, 16), Qt.AlignLeft, "RPM →")
 
@@ -160,9 +163,9 @@ class _Canvas(QWidget):
         if x < left or y < top or y > top + gh:
             return None
         c = int((x - left) / (gw / v.cols))
-        r = int((y - top) / (gh / v.rows))
-        if 0 <= r < v.rows and 0 <= c < v.cols:
-            return r, c
+        vr = int((y - top) / (gh / v.rows))
+        if 0 <= vr < v.rows and 0 <= c < v.cols:
+            return v._vis_to_data(vr), c
         return None
 
 
@@ -191,6 +194,8 @@ class MapView(QWidget):
             self.rpm_bins.append(self.rpm_bins[-1] + 500 if self.rpm_bins else 0)
         self.load_bins = [int(20 + i * (220 / max(1, rows - 1))) for i in range(rows)]
         self.load_label = "MAP"
+        # High load at top for MAP/TPS/VE/ign (standard); ECT etc. stay ascending
+        self.invert_load = True
         self.table = [[0.0 for _ in range(cols)] for _ in range(rows)]
         self.baseline = [[0.0 for _ in range(cols)] for _ in range(rows)]
         self.dirty: set[tuple[int, int]] = set()
@@ -234,11 +239,37 @@ class MapView(QWidget):
         self.legend.setText(f"Scale 0 → {self.vmax:g}  |  cyan=live  |  trail=last 50  |  Arrows select  |  +/- or PgUp/Dn  |  Shift×5  |  Ctrl+C/V  |  Ctrl+P %")
 
     def set_load_bins(self, bins, label="MAP"):
-        self.load_bins = list(bins)[: self.rows]
+        self.load_bins = [float(b) for b in list(bins)[: self.rows]]
         while len(self.load_bins) < self.rows:
-            self.load_bins.append(self.load_bins[-1] if self.load_bins else 0)
+            self.load_bins.append(self.load_bins[-1] if self.load_bins else 0.0)
         self.load_label = label
+        # High load / TPS at top; temperature axes keep low→high top→bottom
+        lab = (label or "").upper()
+        self.invert_load = lab not in ("ECT", "CLT", "IAT", "TEMP")
         self._canvas.update()
+
+    def _data_to_vis(self, r: int) -> int:
+        if self.invert_load:
+            return self.rows - 1 - int(r)
+        return int(r)
+
+    def _vis_to_data(self, vr: int) -> int:
+        if self.invert_load:
+            return self.rows - 1 - int(vr)
+        return int(vr)
+
+    @staticmethod
+    def _nearest_bin(value: float, bins) -> int:
+        if not bins:
+            return 0
+        best_i = 0
+        best_d = abs(float(value) - float(bins[0]))
+        for i, b in enumerate(bins):
+            d = abs(float(value) - float(b))
+            if d < best_d:
+                best_d = d
+                best_i = i
+        return best_i
 
     def set_table(self, data, mark_clean: bool = True):
         for r in range(min(self.rows, len(data))):
@@ -279,15 +310,9 @@ class MapView(QWidget):
         self._canvas.update()
 
     def set_live(self, rpm: float, load: float):
-        # find nearest bin indices
-        c = 0
-        for i, b in enumerate(self.rpm_bins):
-            if rpm >= b:
-                c = i
-        r = 0
-        for i, b in enumerate(self.load_bins):
-            if load >= b:
-                r = i
+        # Nearest bin on the *displayed* axis (matches labels the tuner shows)
+        c = self._nearest_bin(rpm, self.rpm_bins)
+        r = self._nearest_bin(load, self.load_bins)
         r = max(0, min(self.rows - 1, r))
         c = max(0, min(self.cols - 1, c))
         prev = (self.live_r, self.live_c)

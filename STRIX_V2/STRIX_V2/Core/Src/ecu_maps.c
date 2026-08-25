@@ -86,8 +86,9 @@ void lookupMaps(float load, float rpm, int8_t *advOut, float *injOut) {
 
   *advOut = clampAdv((int)(adv + (adv >= 0.0f ? 0.5f : -0.5f)));
   *injOut = inj;
-  mapCellR = r0; /* low corner of cell (for MCELL crosshair) */
-  mapCellC = c0;
+  /* Nearest bin for MCELL (matches tuner crosshair) */
+  mapCellR = (rf >= 0.5f) ? r1 : r0;
+  mapCellC = (cf >= 0.5f) ? c1 : c0;
   baseAdvDeg = *advOut;
   baseInjMs  = inj;
 }
