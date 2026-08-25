@@ -177,8 +177,19 @@ void ECU_Settings_Pack(EcuFlashSettings *out)
     uint16_t e = (uint16_t)(gEoiBtdc + 0.5f);
     if (e < 10) e = 10;
     if (e > 540) e = 540;
+    out->eoiBtdc = e;
+    /* legacy readers still look at reserved[0..1] */
     out->reserved[0] = (uint8_t)(e & 0xFFu);
     out->reserved[1] = (uint8_t)((e >> 8) & 0xFFu);
+  }
+  {
+    uint16_t mn = (uint16_t)(gMapKpaMin + 0.5f);
+    uint16_t mx = (uint16_t)(gMapKpaMax + 0.5f);
+    if (mx < 20) mx = 20;
+    if (mx > 500) mx = 500;
+    if (mn > mx - 20) mn = 0;
+    out->mapKpaMin = mn;
+    out->mapKpaMax = mx;
   }
 }
 
@@ -227,9 +238,30 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
   if (in->mapLoadRefKpa >= 50 && in->mapLoadRefKpa <= 250)
     gMapLoadRefKpa = (float)in->mapLoadRefKpa;
   {
-    uint16_t e = (uint16_t)in->reserved[0] | ((uint16_t)in->reserved[1] << 8);
+    uint16_t e = in->eoiBtdc;
+    if (e < 10)
+      e = (uint16_t)in->reserved[0] | ((uint16_t)in->reserved[1] << 8);
     if (e >= 10 && e <= 540)
       gEoiBtdc = (float)e;
+  }
+  /* MAP sensor scale — survives power cycle */
+  if (in->mapKpaMax >= 20 && in->mapKpaMax <= 500) {
+    float mn = (float)in->mapKpaMin;
+    float mx = (float)in->mapKpaMax;
+    if (mn < 0.0f) mn = 0.0f;
+    if (mx < mn + 20.0f) mx = mn + 20.0f;
+    gMapKpaMin = mn;
+    gMapKpaMax = mx;
+    {
+      uint8_t i;
+      for (i = 0; i < ROWS; i++) {
+        if (ROWS <= 1)
+          mapBinsLive[i] = mn;
+        else
+          mapBinsLive[i] = mn + ((float)i / (float)(ROWS - 1)) * (mx - mn);
+      }
+    }
+    mapCalReady = 0;
   }
   ECU_Idle_SetEnable(idleEnable);
   ECU_Idle_SetTargetRpm((uint16_t)idleTargetRpm);
@@ -615,6 +647,9 @@ if (!strncmp(line, "SAVE", 4)) {
       }
       /* Sensor range change invalidates multi-point cal (use linear scale) */
       mapCalReady = 0;
+      mapsDirty = 1;
+      savePending = 1;
+      persistDueMs = millis() + 50u; /* NVM write in ECU_Loop when RPM=0 */
       {
         char b[48];
         snprintf(b, sizeof b, "OK:MAPSCALE,%.0f,%.0f\r\n", (double)mn, (double)mx);
@@ -642,6 +677,9 @@ if (!strncmp(line, "SAVE", 4)) {
         }
       }
       mapCalReady = 0;
+      mapsDirty = 1;
+      savePending = 1;
+      persistDueMs = millis() + 50u;
       {
         char b[40];
         snprintf(b, sizeof b, "OK:MAPMAX,%.0f\r\n", (double)mx);
@@ -964,16 +1002,17 @@ if (!strncmp(line, "SAVE", 4)) {
   }
 
   if (!strncmp(line, "GETCFG", 6)) {
-    char b[160];
+    char b[192];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f\r\n",
+             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
              (unsigned)gWheelId, (unsigned)gCamMode,
              (unsigned)(boostEnable ? (bstOpenLoop ? 2u : 1u) : 0u),
-             (double)gEoiBtdc);
+             (double)gEoiBtdc,
+             (double)gMapKpaMin, (double)gMapKpaMax);
     uartWrite(b);
     return;
   }

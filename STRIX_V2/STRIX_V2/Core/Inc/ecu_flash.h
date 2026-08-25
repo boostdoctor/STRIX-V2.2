@@ -59,7 +59,9 @@ typedef struct __attribute__((packed)) {
   uint8_t  coilChargeMode;/* 0=constant duty 1=constant charge */
   uint8_t  camModeP1;     /* 0=unset 1=no cam home 2=cam home */
   uint16_t eoiBtdc;       /* 10..540 deg BTDC compression */
-  uint8_t  reserved[10];
+  uint16_t mapKpaMin;     /* ADC 0 → kPa (linear MAP scale) */
+  uint16_t mapKpaMax;     /* ADC 4095 → kPa (sensor full scale) */
+  uint8_t  reserved[6];
 } EcuFlashSettings;
 
 typedef struct __attribute__((packed)) {

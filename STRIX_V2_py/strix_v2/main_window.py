@@ -766,6 +766,7 @@ class MainWindow(QMainWindow):
         add("VE mode", "VEMODE", lambda v: "ON" if int(float(v)) else "OFF")
         add("Req fuel", "REQFUEL")
         add("Flow cc", "FLOW")
+        add("MAP scale", "MAPSCALE")
         self._pending_cfg_parts = parts
         self._last_cfg_summary = ",".join(f"{a}={b}" for a, b in summary[:4]) or "ok"
         self._update_conn_strip()
@@ -834,6 +835,26 @@ class MainWindow(QMainWindow):
             self.engine["req_fuel_ms"] = float(parts["REQFUEL"])
         if "FLOW" in parts:
             self.engine["inj_flow_cc"] = float(parts["FLOW"])
+        if "MAPSCALE" in parts:
+            # "min:max" from CFG:...MAPSCALE:0:500
+            raw = parts["MAPSCALE"].strip()
+            try:
+                if ":" in raw:
+                    a, b = raw.split(":", 1)
+                    mn, mx = float(a), float(b)
+                else:
+                    mn, mx = 0.0, float(raw)
+                if mx >= 20:
+                    self.engine["map_kpa_min"] = int(round(mn))
+                    self.engine["map_kpa_max"] = int(round(mx))
+                    from strix_v2.constants import make_map_bins
+                    self.engine["map_bins"] = make_map_bins(
+                        int(self.engine["map_kpa_max"]),
+                        int(self.engine["map_kpa_min"]),
+                    )
+                    self._apply_load_bins()
+            except (ValueError, TypeError):
+                pass
         if "WHEEL" in parts:
             w = WHEEL_FROM_ECU.get(int(float(parts["WHEEL"])))
             if w is not None:
@@ -1225,6 +1246,8 @@ class MainWindow(QMainWindow):
         self._tx("SET:MAPSCALE,%d,%d\n" % (map_min, map_max))
         self.engine["map_bins"] = make_map_bins(map_max, map_min)
         self._apply_load_bins()
+        # Persist MAP scale in ECU flash (writes when RPM = 0)
+        self._tx("SAVE\n")
 
         self._tx("GETCFG\n")
 
