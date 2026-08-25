@@ -67,8 +67,13 @@ void ECU_Adc_Init(void)
    *
    * Length = ECU_ADC_RANK_COUNT so each sequence fills one frame.
    */
-  if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adcDmaBuf, ECU_ADC_RANK_COUNT) == HAL_OK) {
+  if (hadc1.DMA_Handle != NULL &&
+      HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adcDmaBuf, ECU_ADC_RANK_COUNT) == HAL_OK) {
     ecuAdcDmaRunning = 1;
+  } else {
+    /* Polling path: single-channel ConfigChannel per readAdc() */
+    ecuAdcDmaRunning = 0;
+    (void)HAL_ADC_Stop_DMA(&hadc1);
   }
 #endif
 

@@ -657,14 +657,43 @@ class MainWindow(QMainWindow):
         self._update_dirty_status()
         self.status.showMessage("Maps loaded from ECU", 4000)
 
+    def _live_load_for_maps(self) -> float:
+        """Load value in the same units as map load axis (kPa or TPS%).
+
+        Firmware LOAD: is normalised (engMap/ref ≈ 0.2–2.4). Map widgets use
+        absolute kPa (20–240) or TPS % — never feed normalised LOAD into set_live.
+        Prefer ECU MCELL when present (handled in _refresh_ui).
+        """
+        lab = ""
+        if hasattr(self, "map_inj"):
+            lab = (getattr(self.map_inj, "load_label", "") or "").upper()
+        if "TPS" in lab:
+            return float(self.live.get("tps") or 0)
+        # Default MAP axis — use absolute manifold pressure kPa
+        return float(self.live.get("map") or 0)
+
     def _refresh_ui(self):
         self.strip.update_live(self.live)
         rpm = float(self.live.get("rpm") or 0)
-        load = float(self.live.get("load") or self.live.get("map") or 0)
-        self.map_ign.set_live(rpm, load)
-        self.map_inj.set_live(rpm, load)
-        if hasattr(self, "map_afr") and self.tabs.isTabVisible(self._afr_tab_idx):
-            self.map_afr.set_live(rpm, load)
+        # Prefer ECU map cell (matches firmware lookup exactly)
+        mr = self.live.get("mcell_r")
+        mc = self.live.get("mcell_c")
+        use_cell = (
+            mr is not None and mc is not None
+            and int(mr) >= 0 and int(mc) >= 0
+        )
+        load = self._live_load_for_maps()
+        if use_cell:
+            r, c = int(mr), int(mc)
+            self.map_ign.set_live_cell(r, c)
+            self.map_inj.set_live_cell(r, c)
+            if hasattr(self, "map_afr") and self.tabs.isTabVisible(self._afr_tab_idx):
+                self.map_afr.set_live_cell(r, c)
+        else:
+            self.map_ign.set_live(rpm, load)
+            self.map_inj.set_live(rpm, load)
+            if hasattr(self, "map_afr") and self.tabs.isTabVisible(self._afr_tab_idx):
+                self.map_afr.set_live(rpm, load)
         if hasattr(self, "map_idle_fuel"):
             ect = float(self.live.get("ect") or 0)
             self.map_idle_fuel.set_live(rpm, ect)

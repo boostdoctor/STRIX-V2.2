@@ -98,7 +98,12 @@ class LiveStrip(QFrame):
         self.cells["rpm"].set_value(f"{rpm}")
         self.cells["tps"].set_value(f"{float(live.get('tps') or 0):.0f}%")
         self.cells["map"].set_value(f"{int(round(float(live.get('map') or 0)))}")
-        self.cells["load"].set_value(f"{int(round(float(live.get('load') or 0)))}")
+        # Firmware LOAD is normalised (0.2–2.4); show as % of ref for readability
+        ld = float(live.get("load") or 0)
+        if 0.0 < ld < 5.0:
+            self.cells["load"].set_value(f"{ld * 100.0:.0f}%")
+        else:
+            self.cells["load"].set_value(f"{int(round(ld))}")
         self.cells["sync"].set_value(
             "LOCK" if sync else "—",
             "#55ff99" if sync else "#ff7777",

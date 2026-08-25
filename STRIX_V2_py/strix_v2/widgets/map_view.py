@@ -264,6 +264,20 @@ class MapView(QWidget):
         self.dirty_lbl.setText(f"{n} unsaved" if n else "")
         self.dirty_changed.emit()
 
+    def set_live_cell(self, r: int, c: int):
+        """Place live crosshair on ECU-reported cell (MCELL)."""
+        r = max(0, min(self.rows - 1, int(r)))
+        c = max(0, min(self.cols - 1, int(c)))
+        prev = (self.live_r, self.live_c)
+        if (r, c) != prev:
+            self.trail.append((r, c))
+            if len(self.trail) > self._trail_max:
+                self.trail = self.trail[-self._trail_max:]
+        self.live_r, self.live_c = r, c
+        self._stable_live = (r, c)
+        self._live_hold = 0
+        self._canvas.update()
+
     def set_live(self, rpm: float, load: float):
         # find nearest bin indices
         c = 0
