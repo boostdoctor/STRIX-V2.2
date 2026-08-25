@@ -113,6 +113,8 @@ extern volatile uint8_t  gCoilType;         /* 0=smart 1=dumb 2=dist */
 extern volatile uint8_t  gCoilChargeMode;   /* 0=duty 1=charge */
 extern volatile uint16_t gBatchAboveRpm;
 extern float gMapLoadRefKpa;
+extern float gMapKpaMin; /* ADC 0 */
+extern float gMapKpaMax; /* ADC 4095 = sensor max kPa */
 
 /* Sync / RPM */
 extern volatile uint32_t lastToothUs, lastGapUs, toothPeriodUs, toothPeriodFilt;

@@ -455,7 +455,7 @@ class MainWindow(QMainWindow):
             bins = self.engine.get("tps_bins") or make_tps_bins()
             lab = "TPS"
         else:
-            bins = self.engine.get("map_bins") or make_map_bins(int(self.engine.get("map_kpa_max") or 240))
+            bins = self.engine.get("map_bins") or make_map_bins(int(self.engine.get("map_kpa_max") or 240), int(self.engine.get("map_kpa_min") or 0))
             lab = "MAP"
         self.map_ign.set_load_bins(bins, lab)
         self.map_inj.set_load_bins(bins, lab)
@@ -1217,6 +1217,15 @@ class MainWindow(QMainWindow):
             1 if eng.get("tacho_enable") else 0,
             int(eng.get("tacho_ppr") or 2),
         ))
+        # MAP sensor linear scale: ADC0=min, ADC4095=max kPa
+        map_min = int(eng.get("map_kpa_min") or 0)
+        map_max = int(eng.get("map_kpa_max") or 240)
+        if map_max < map_min + 20:
+            map_max = map_min + 20
+        self._tx("SET:MAPSCALE,%d,%d\n" % (map_min, map_max))
+        self.engine["map_bins"] = make_map_bins(map_max, map_min)
+        self._apply_load_bins()
+
         self._tx("GETCFG\n")
 
     def _apply_motorsport_tab(self):

@@ -20,12 +20,14 @@ MAP_KPA_MIN = 20
 MAP_KPA_MAX_DEFAULT = 240
 MAP_KPA_MAX_LIMIT = 500
 
-def make_map_bins(kpa_max: int = MAP_KPA_MAX_DEFAULT) -> list[int]:
-    kpa_max = max(MAP_KPA_MIN + ROWS, min(MAP_KPA_MAX_LIMIT, int(kpa_max)))
+def make_map_bins(kpa_max: int = MAP_KPA_MAX_DEFAULT, kpa_min: int = 0) -> list[int]:
+    """Evenly spaced load axis from kpa_min … kpa_max (ADC 0→min, 4095→max)."""
+    kpa_min = max(0, int(kpa_min))
+    kpa_max = max(kpa_min + ROWS, min(MAP_KPA_MAX_LIMIT, int(kpa_max)))
     if ROWS <= 1:
-        return [MAP_KPA_MIN]
-    step = (kpa_max - MAP_KPA_MIN) / (ROWS - 1)
-    return [int(round(MAP_KPA_MIN + i * step)) for i in range(ROWS)]
+        return [kpa_min]
+    step = (kpa_max - kpa_min) / (ROWS - 1)
+    return [int(round(kpa_min + i * step)) for i in range(ROWS)]
 
 def make_tps_bins() -> list[int]:
     """TPS load axis 0…100 % whole numbers."""

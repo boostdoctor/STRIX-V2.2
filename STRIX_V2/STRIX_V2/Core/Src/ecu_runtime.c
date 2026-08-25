@@ -71,6 +71,8 @@ volatile uint8_t  gUseTps = 0; /* 1=Alpha-N (TPS), 0=Speed-density (MAP) */
 volatile uint8_t  gLoadMode = 0;
 /* MAP reference for load=1.0 (kPa). 100 = atmospheric baseline */
 float gMapLoadRefKpa = 100.0f;
+float gMapKpaMin = 0.0f;   /* ADC 0 → this kPa */
+float gMapKpaMax = 240.0f; /* ADC 4095 → this kPa (sensor full scale) */
 volatile uint8_t  gCyl = CFG_CYLINDERS;
 volatile uint8_t  gCoilSmart = 1;  /* 1=smart 0=dumb */
 volatile uint8_t  gDbwEnable = 1;  /* 0=idle actuator only */

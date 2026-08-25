@@ -256,7 +256,8 @@ class SensorCalDialog(QDialog):
             "max_kpa": self.map_max.value(),
         }
         settings["map_kpa_max"] = self.map_max.value()
-        settings["map_bins"] = make_map_bins(self.map_max.value())
+        settings["map_kpa_min"] = int(settings.get("map_kpa_min") or 0)
+        settings["map_bins"] = make_map_bins(self.map_max.value(), settings["map_kpa_min"])
         sens["tps"] = {"enabled": self.tps_en.isChecked(), "preset": "Custom"}
         def _read_comp(table, rows):
             out = []
@@ -1170,7 +1171,8 @@ class EngineSettingsDialog(QDialog):
         if hasattr(self, "_sensor_cal"):
             self._sensor_cal.apply_to(settings)
         if settings["load_mode"] == "MAP":
-            settings["map_bins"] = make_map_bins(int(settings.get("map_kpa_max") or 240))
+            settings["map_kpa_min"] = int(settings.get("map_kpa_min") or 0)
+            settings["map_bins"] = make_map_bins(int(settings.get("map_kpa_max") or 240), settings["map_kpa_min"])
         elif settings["load_mode"] == "TPS":
             from strix_v2.constants import make_tps_bins
             settings["tps_bins"] = make_tps_bins()

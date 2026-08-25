@@ -57,7 +57,9 @@ void readSensors(void) {
     adcBat   = ECU_Adc_Raw(ECU_ADC_IX_VBATT);
     adcPedal = 0;
 
-    /* Instant raw engineering units */
+    /* Instant raw engineering units
+     * Default MAP: linear ADC 0 → gMapKpaMin, ADC 4095 → gMapKpaMax
+     * (sensor range from tuner; multi-point mapCal overrides when ready) */
     float map_raw, tps_raw;
     if (mapCalReady) {
       float a = (float)adcMap; int i = 0;
@@ -68,7 +70,9 @@ void readSensors(void) {
       if (f > 1) f = 1;
       map_raw = mapCalKpa[i] * (1 - f) + mapCalKpa[i + 1] * f;
     } else {
-      map_raw = CFG_MAP_OFFSET_KPA + adcMap * scale * CFG_MAP_GAIN_KPA_V;
+      float span = gMapKpaMax - gMapKpaMin;
+      if (span < 1.0f) span = 1.0f;
+      map_raw = gMapKpaMin + ((float)adcMap / CFG_ADC_MAX) * span;
     }
     tps_raw = adcToPctCal(adcTps, tpsClosedAdc, tpsOpenAdc);
     engPedal = adcToPctCal(adcPedal, pedClosedAdc, pedOpenAdc);
@@ -158,7 +162,9 @@ void readSensors(void) {
           if (f > 1) f = 1;
           map_raw = mapCalKpa[i] * (1 - f) + mapCalKpa[i + 1] * f;
         } else {
-          map_raw = CFG_MAP_OFFSET_KPA + adcMap * scale * CFG_MAP_GAIN_KPA_V;
+          float span = gMapKpaMax - gMapKpaMin;
+          if (span < 1.0f) span = 1.0f;
+          map_raw = gMapKpaMin + ((float)adcMap / CFG_ADC_MAX) * span;
         }
         tps_raw = adcToPctCal(adcTps, tpsClosedAdc, tpsOpenAdc);
         static float map_f = -1.0f, tps_f = -1.0f;

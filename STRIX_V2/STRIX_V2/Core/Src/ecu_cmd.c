@@ -593,6 +593,65 @@ if (!strncmp(line, "SAVE", 4)) {
     }
     return;
   }
+  /* SET:MAPSCALE,minKpa,maxKpa — ADC 0→min, ADC 4095→max (linear) */
+  if (!strncmp(line, "SET:MAPSCALE,", 13)) {
+    float mn = 0.0f, mx = 240.0f;
+    if (sscanf(line + 13, "%f,%f", &mn, &mx) >= 1) {
+      if (mn < 0.0f) mn = 0.0f;
+      if (mn > 200.0f) mn = 200.0f;
+      if (mx < mn + 20.0f) mx = mn + 20.0f;
+      if (mx > 500.0f) mx = 500.0f;
+      gMapKpaMin = mn;
+      gMapKpaMax = mx;
+      /* Rebuild load axis  min … max across ROWS */
+      {
+        uint8_t i;
+        for (i = 0; i < ROWS; i++) {
+          if (ROWS <= 1)
+            mapBinsLive[i] = mn;
+          else
+            mapBinsLive[i] = mn + ((float)i / (float)(ROWS - 1)) * (mx - mn);
+        }
+      }
+      /* Sensor range change invalidates multi-point cal (use linear scale) */
+      mapCalReady = 0;
+      {
+        char b[48];
+        snprintf(b, sizeof b, "OK:MAPSCALE,%.0f,%.0f\r\n", (double)mn, (double)mx);
+        uartWrite(b);
+      }
+    } else {
+      uartErr("MAPSCALE", "PARSE");
+    }
+    return;
+  }
+  if (!strncmp(line, "SET:MAPMAX,", 11)) {
+    float mx = 240.0f;
+    if (parse_float(line + 11, &mx) > 0) {
+      if (mx < gMapKpaMin + 20.0f) mx = gMapKpaMin + 20.0f;
+      if (mx > 500.0f) mx = 500.0f;
+      gMapKpaMax = mx;
+      {
+        uint8_t i;
+        float mn = gMapKpaMin;
+        for (i = 0; i < ROWS; i++) {
+          if (ROWS <= 1)
+            mapBinsLive[i] = mn;
+          else
+            mapBinsLive[i] = mn + ((float)i / (float)(ROWS - 1)) * (mx - mn);
+        }
+      }
+      mapCalReady = 0;
+      {
+        char b[40];
+        snprintf(b, sizeof b, "OK:MAPMAX,%.0f\r\n", (double)mx);
+        uartWrite(b);
+      }
+    } else {
+      uartErr("MAPMAX", "PARSE");
+    }
+    return;
+  }
   if (!strncmp(line, "SET:L,", 6)) {
     int a = 0, b = 0, mode = 0;
     int n = 0;
