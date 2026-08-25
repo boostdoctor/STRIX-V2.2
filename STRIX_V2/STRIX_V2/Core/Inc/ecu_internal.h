@@ -67,6 +67,7 @@ uint32_t millis(void);
 uint32_t micros(void);
 uint16_t readAdc(uint32_t ch); /* ecu_adc.c — DMA or poll */
 void ECU_Adc_Init(void);
+void ECU_SanitizeMapBins(void);
 void ECU_Adc_Stop(void);
 
 void rpmKalmanReset(void);

@@ -19,11 +19,10 @@ const float rpmBins[COLS] = {
  3250, 3625, 4000, 4375, 4750, 5125, 5500, 5875,
  6250, 6625, 7000, 7375, 7750, 8125
 };
-/* 15-row load axis (0.10-1.08 normalised) */
-/* 12-row load axis: 20..240 kPa default (engMap kPa/100 → 0.20..2.40) */
+/* 12-row load axis: absolute MAP kPa (matches tuner make_map_bins) */
 const float mapBins[ROWS] = {
-  0.20f, 0.40f, 0.60f, 0.80f, 1.00f, 1.20f,
-  1.40f, 1.60f, 1.80f, 2.00f, 2.20f, 2.40f
+  20.0f, 40.0f, 60.0f, 80.0f, 100.0f, 120.0f,
+  140.0f, 160.0f, 180.0f, 200.0f, 220.0f, 240.0f
 };
 
 int8_t  advMap[ROWS][COLS];
@@ -214,7 +213,7 @@ uint32_t injPrimeEndMs = 0;
 uint8_t  injPrimeActive = 0;
 uint32_t lastZeroRpmMs = 0;
 float gFanOnC  = 95.0f;
-float gFanOffC = 90.0f; /* hysteresis: off below on-hyst */
+float gFanOffC = 88.0f; /* hysteresis: must be < gFanOnC */
 uint8_t gFanEnable = 1; /* 0 = fan output forced off */
 /* VVT duty 0-100% via TIM1 PWM (period 1000 counts) */
 uint8_t vvt1Duty = 0, vvt2Duty = 0;

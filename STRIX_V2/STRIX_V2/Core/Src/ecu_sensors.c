@@ -55,9 +55,10 @@ void readSensors(void) {
     adcIat   = ECU_Adc_Raw(ECU_ADC_IX_IAT);
     adcO2    = ECU_Adc_Raw(ECU_ADC_IX_O2);
     adcBat   = ECU_Adc_Raw(ECU_ADC_IX_VBATT);
-    /* adcFlex unused for ADC — frequency path updates engEthanol */
     adcPedal = 0;
 
+    /* Instant raw engineering units */
+    float map_raw, tps_raw;
     if (mapCalReady) {
       float a = (float)adcMap; int i = 0;
       while (i < MAP_CAL_N - 2 && a > mapCalAdc[i + 1]) i++;
@@ -65,14 +66,40 @@ void readSensors(void) {
       float f = (a1 > a0) ? (a - a0) / (a1 - a0) : 0;
       if (f < 0) f = 0;
       if (f > 1) f = 1;
-      engMap = mapCalKpa[i] * (1 - f) + mapCalKpa[i + 1] * f;
+      map_raw = mapCalKpa[i] * (1 - f) + mapCalKpa[i + 1] * f;
     } else {
-      engMap = CFG_MAP_OFFSET_KPA + adcMap * scale * CFG_MAP_GAIN_KPA_V;
+      map_raw = CFG_MAP_OFFSET_KPA + adcMap * scale * CFG_MAP_GAIN_KPA_V;
     }
-    engTps   = adcToPctCal(adcTps, tpsClosedAdc, tpsOpenAdc);
+    tps_raw = adcToPctCal(adcTps, tpsClosedAdc, tpsOpenAdc);
     engPedal = adcToPctCal(adcPedal, pedClosedAdc, pedOpenAdc);
-    engEct   = ntcBetaC(adcEct);
-    engIat   = ntcBetaC(adcIat);
+
+    /*
+     * MAP / TPS low-pass — sensors were too jumpy for stable crosshair / fuel.
+     * ~α=0.12 at ~1 kHz sensor loop → tau roughly 8 ms effective on noisy ADC.
+     */
+    {
+      static float map_f = -1.0f, tps_f = -1.0f;
+      const float a_map = 0.12f;
+      const float a_tps = 0.15f;
+      if (map_f < 0.0f) { map_f = map_raw; tps_f = tps_raw; }
+      map_f += a_map * (map_raw - map_f);
+      tps_f += a_tps * (tps_raw - tps_f);
+      engMap = map_f;
+      engTps = tps_f;
+    }
+
+    /* CLT / IAT: thermal mass is slow — refresh at most every 5 s */
+    {
+      static uint32_t lastTempMs = 0;
+      static uint8_t tempInit = 0;
+      uint32_t now = HAL_GetTick();
+      if (!tempInit || (now - lastTempMs) >= 5000u) {
+        engEct = ntcBetaC(adcEct);
+        engIat = ntcBetaC(adcIat);
+        lastTempMs = now;
+        tempInit = 1;
+      }
+    }
     if (batCalReady) {
       float a = (float)adcBat;
       int i = 0;
@@ -120,16 +147,27 @@ void readSensors(void) {
     case 0:
       adcMap = readAdc(ECU_ADC_CH_MAP);
       adcTps = readAdc(ECU_ADC_CH_TPS);
-      if (mapCalReady) {
-        float a = (float)adcMap; int i = 0;
-        while (i < MAP_CAL_N - 2 && a > mapCalAdc[i + 1]) i++;
-        float a0 = mapCalAdc[i], a1 = mapCalAdc[i + 1];
-        float f = (a1 > a0) ? (a - a0) / (a1 - a0) : 0;
-        if (f < 0) f = 0;
-        if (f > 1) f = 1;
-        engMap = mapCalKpa[i] * (1 - f) + mapCalKpa[i + 1] * f;
-      } else engMap = CFG_MAP_OFFSET_KPA + adcMap * scale * CFG_MAP_GAIN_KPA_V;
-      engTps = adcToPctCal(adcTps, tpsClosedAdc, tpsOpenAdc);
+      {
+        float map_raw, tps_raw;
+        if (mapCalReady) {
+          float a = (float)adcMap; int i = 0;
+          while (i < MAP_CAL_N - 2 && a > mapCalAdc[i + 1]) i++;
+          float a0 = mapCalAdc[i], a1 = mapCalAdc[i + 1];
+          float f = (a1 > a0) ? (a - a0) / (a1 - a0) : 0;
+          if (f < 0) f = 0;
+          if (f > 1) f = 1;
+          map_raw = mapCalKpa[i] * (1 - f) + mapCalKpa[i + 1] * f;
+        } else {
+          map_raw = CFG_MAP_OFFSET_KPA + adcMap * scale * CFG_MAP_GAIN_KPA_V;
+        }
+        tps_raw = adcToPctCal(adcTps, tpsClosedAdc, tpsOpenAdc);
+        static float map_f = -1.0f, tps_f = -1.0f;
+        if (map_f < 0.0f) { map_f = map_raw; tps_f = tps_raw; }
+        map_f += 0.12f * (map_raw - map_f);
+        tps_f += 0.15f * (tps_raw - tps_f);
+        engMap = map_f;
+        engTps = tps_f;
+      }
       break;
     case 1:
       adcPedal = readAdc(ECU_ADC_CH_PEDAL);
@@ -151,8 +189,17 @@ void readSensors(void) {
     case 2:
       adcEct = readAdc(ECU_ADC_CH_CLT);
       adcIat = readAdc(ECU_ADC_CH_IAT);
-      engEct = ntcBetaC(adcEct);
-      engIat = ntcBetaC(adcIat);
+      {
+        static uint32_t lastTempMsP = 0;
+        static uint8_t tempInitP = 0;
+        uint32_t now = HAL_GetTick();
+        if (!tempInitP || (now - lastTempMsP) >= 5000u) {
+          engEct = ntcBetaC(adcEct);
+          engIat = ntcBetaC(adcIat);
+          lastTempMsP = now;
+          tempInitP = 1;
+        }
+      }
       break;
     default:
       adcO2    = readAdc(ECU_ADC_CH_O2);

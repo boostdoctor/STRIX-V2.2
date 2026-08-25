@@ -239,13 +239,18 @@ void serviceOutputs(void) {
     fpOn = 0;
   }
 
-  /* Fan with hysteresis: on at gFanOnC, off at gFanOffC */
+  /* Fan with hysteresis: ON at gFanOnC, OFF at gFanOffC (must be lower) */
+  if (gFanOffC >= gFanOnC)
+    gFanOffC = gFanOnC - 5.0f;
   if (!gFanEnable) {
     fanOn = 0;
   } else if (fanOn) {
-    fanOn = (engEct > gFanOffC) ? 1 : 0;
+    /* Stay on until cooled below off threshold */
+    if (engEct <= gFanOffC)
+      fanOn = 0;
   } else {
-    fanOn = (engEct >= gFanOnC) ? 1 : 0;
+    if (engEct >= gFanOnC)
+      fanOn = 1;
   }
   if (fpOn) ECU_FP_HI(); else ECU_FP_LO();
   if (fanOn) ECU_FAN_HI(); else ECU_FAN_LO();

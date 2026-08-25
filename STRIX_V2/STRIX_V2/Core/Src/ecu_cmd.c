@@ -338,6 +338,7 @@ void ECU_Flash_ApplyExtras(const EcuFlashBlob *blob)
   for (uint8_t r = 0; r < ROWS && r < 12; r++)
     if (blob->mapBins[r] >= 10)
       mapBinsLive[r] = (float)blob->mapBins[r];
+  ECU_SanitizeMapBins();
   gVeMode = blob->veMode ? 1u : 0u;
   if (blob->reqFuelCenti >= 30 && blob->reqFuelCenti <= 2000)
     gReqFuelMs = blob->reqFuelCenti / 100.0f;
@@ -843,7 +844,20 @@ if (!strncmp(line, "SAVE", 4)) {
     if (t < 60) t = 60;
     if (t > 130) t = 130;
     gFanOnC = (float)t;
+    /* Keep off threshold 7 °C below on (hysteresis) */
+    gFanOffC = gFanOnC - 7.0f;
+    if (gFanOffC < 50.0f) gFanOffC = 50.0f;
     uartWrite("OK:FAN\r\n");
+    return;
+  }
+  if (!strncmp(line, "SET:FANOFF,", 11)) {
+    int t = atoi(line + 11);
+    if (t < 40) t = 40;
+    if (t > 125) t = 125;
+    gFanOffC = (float)t;
+    if (gFanOffC >= gFanOnC)
+      gFanOffC = gFanOnC - 3.0f;
+    uartWrite("OK:FANOFF\r\n");
     return;
   }
   if (!strncmp(line, "SET:FLEX,", 9)) {

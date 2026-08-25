@@ -95,59 +95,68 @@ void lookupMaps(float load, float rpm, int8_t *advOut, float *injOut) {
 /* ── Sequential coils ───────────────────────────────────────── */
 
 /* ---- lines 3925-3981 ---- */
+
+/** If live MAP bins look like legacy normalised 0.2–2.4, convert to kPa ×100. */
+void ECU_SanitizeMapBins(void)
+{
+  float mx = 0.0f;
+  for (uint8_t i = 0; i < ROWS; i++) {
+    if (mapBinsLive[i] > mx) mx = mapBinsLive[i];
+  }
+  if (mx > 0.0f && mx < 5.0f) {
+    for (uint8_t i = 0; i < ROWS; i++)
+      mapBinsLive[i] *= 100.0f;
+  }
+}
+
 float calcEngineLoad(void)
 {
-  float load_tps = 0.5f;
-  float load_map = 0.5f;
+  /*
+   * Return value is in the same units as mapBinsLive:
+   *   mode 0 MAP  → absolute kPa (engMap)
+   *   mode 1 TPS  → throttle %
+   *   mode 2 hybrid → kPa-weighted blend
+   * So lookupMaps() and tuner MCELL/crosshair stay aligned.
+   */
+  float map_kpa = engMap;
+  if (map_kpa < 0.0f) map_kpa = 0.0f;
+  if (map_kpa > 500.0f) map_kpa = 500.0f;
 
-  if (sensTpsEn) {
-    load_tps = engTps * 0.01f;
-    if (load_tps < 0.0f) load_tps = 0.0f;
-    if (load_tps > 1.2f) load_tps = 1.2f;
-  }
-  if (sensMapEn) {
-    float ref = gMapLoadRefKpa;
-    if (ref < 50.0f) ref = 50.0f;
-    if (ref > 250.0f) ref = 250.0f;
-    load_map = engMap / ref;
-    if (load_map < 0.0f) load_map = 0.0f;
-  }
+  float tps_pct = engTps;
+  if (tps_pct < 0.0f) tps_pct = 0.0f;
+  if (tps_pct > 100.0f) tps_pct = 100.0f;
 
-  float load;
   uint8_t mode = gLoadMode;
-  /* Keep gUseTps in sync for older GETIGNDBG / tools */
   if (mode == 1) gUseTps = 1;
   else if (mode == 0) gUseTps = 0;
 
+  float load;
   if (mode == 1) {
-    /* Alpha-N + light RPM volumetric proxy */
-    float rpm_f = (float)rpmLive;
-    float fill = 1.0f;
-    if (rpm_f > 200.0f && rpm_f < 1500.0f)
-      fill = 0.85f + 0.15f * (rpm_f / 1500.0f);
-    else if (rpm_f <= 200.0f)
-      fill = 0.85f;
-    load = sensTpsEn ? (load_tps * fill) : load_map;
+    /* Alpha-N — axis is TPS % */
+    load = sensTpsEn ? tps_pct : map_kpa;
   } else if (mode == 2) {
-    /* Hybrid MAP + TPS, weighted by RPM and throttle */
+    /* Hybrid: blend MAP kPa with TPS scaled onto MAP axis via LREF */
+    float ref = gMapLoadRefKpa;
+    if (ref < 50.0f) ref = 50.0f;
+    if (ref > 250.0f) ref = 250.0f;
+    float tps_as_kpa = (tps_pct * 0.01f) * ref;
     float rpm_f = (float)rpmLive;
     float w_rpm = (rpm_f - 1200.0f) / 2800.0f;
     if (w_rpm < 0.0f) w_rpm = 0.0f;
     if (w_rpm > 1.0f) w_rpm = 1.0f;
-    float w_thr = load_tps;
-    if (w_thr < 0.0f) w_thr = 0.0f;
-    if (w_thr > 1.0f) w_thr = 1.0f;
+    float w_thr = tps_pct * 0.01f;
     float w = 0.5f * w_rpm + 0.5f * w_thr;
     if (!sensMapEn) w = 0.0f;
     if (!sensTpsEn) w = 1.0f;
-    load = (1.0f - w) * load_tps + w * load_map;
+    load = (1.0f - w) * tps_as_kpa + w * map_kpa;
   } else {
-    /* Mode 0 — speed density */
-    load = sensMapEn ? load_map : load_tps;
+    /* Speed-density — absolute MAP kPa */
+    load = sensMapEn ? map_kpa : tps_pct;
   }
 
   if (load < 0.0f) load = 0.0f;
-  if (load > 5.0f) load = 5.0f;
+  if (load > 500.0f) load = 500.0f;
   return load;
 }
+
 

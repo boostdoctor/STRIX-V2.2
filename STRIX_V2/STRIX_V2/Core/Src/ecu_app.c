@@ -165,6 +165,7 @@ void ECU_Init(void) {
   ECU_Features_Init();
   for (uint8_t i = 0; i < COLS; i++) rpmBinsLive[i] = rpmBins[i];
   for (uint8_t i = 0; i < ROWS; i++) mapBinsLive[i] = mapBins[i];
+  ECU_SanitizeMapBins();
   for (uint8_t r = 0; r < ETB_ROWS; r++)
     for (uint8_t c = 0; c < ETB_COLS; c++) {
       /* default linear pedal response */

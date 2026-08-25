@@ -310,7 +310,7 @@ class MapView(QWidget):
         else:
             self.live_r, self.live_c = r, c
             self._live_hold = 1
-        if self._live_hold >= 3:
+        if self._live_hold >= 1:
             if self._stable_live != (r, c) and r >= 0:
                 self.trail.append((r, c))
                 if len(self.trail) > self._trail_max:
