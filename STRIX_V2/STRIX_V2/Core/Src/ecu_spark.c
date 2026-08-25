@@ -96,7 +96,6 @@ void scheduleCoils(uint32_t now)
 
     float tdc = seq ? tdcDeg(i) : wastedTdc(i);
     float fire = wrapAngle(tdc + trig - adv, cycle);
-    float dwellStart = wrapAngle(fire - dwellDeg, cycle);
 
     /* Re-arm after leaving the fire tooth (works on 360 and 720). */
     if (coilFired[i] && !coilState[i]) {
@@ -106,6 +105,7 @@ void scheduleCoils(uint32_t now)
     }
 
 #if !CFG_COIL_SMART
+    float dwellStart = wrapAngle(fire - dwellDeg, cycle);
     uint8_t inDwell = angleActive(deg, dwellStart, fire, cycle);
 #endif
     uint8_t atFire = (angDelta(deg, fire, cycle) < (band * 2.0f));

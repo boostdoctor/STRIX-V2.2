@@ -122,6 +122,7 @@ void ECU_Init(void) {
 
   /* Timer-triggered (TIM9) or continuous DMA ADC scan — see CUBEMX_ADC_DMA.md */
   ECU_Adc_Init();
+  ECU_Flex_Init(); /* PA6 frequency flex sensor */
 
   vvtMapsDefault();
   {

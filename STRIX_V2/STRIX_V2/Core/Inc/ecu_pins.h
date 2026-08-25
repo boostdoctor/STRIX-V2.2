@@ -58,6 +58,12 @@
 #define LED_Pin            GPIO_PIN_13
 #endif
 
+/* ── Flex fuel frequency input (40–160 Hz) ──────────────── */
+#ifndef FLEX_Pin
+#define FLEX_GPIO_Port     GPIOA
+#define FLEX_Pin           GPIO_PIN_6   /* EXTI rising edges → ethanol % */
+#endif
+
 #ifndef TACHO_Pin
 #define TACHO_GPIO_Port    GPIOC
 #define TACHO_Pin          GPIO_PIN_14   /* spare — no LSE on Black Pill */
@@ -134,7 +140,7 @@ extern TIM_HandleTypeDef  htim3;   /* Cam2 PB4 TIM3_CH1 */
 #define ECU_ADC_CH_CLT     ADC_CHANNEL_3
 #define ECU_ADC_CH_IAT     ADC_CHANNEL_4
 #define ECU_ADC_CH_O2      ADC_CHANNEL_5   /* PA5 */
-#define ECU_ADC_CH_FLEX    ADC_CHANNEL_6   /* PA6 ethanol / flex fuel */
+#define ECU_ADC_CH_FLEX    ADC_CHANNEL_6   /* legacy — PA6 is FLEX frequency, not ADC */
 #define ECU_ADC_CH_VBATT   ADC_CHANNEL_7   /* PA7 */
 #define ECU_ADC_CH_PEDAL   ADC_CHANNEL_12
 

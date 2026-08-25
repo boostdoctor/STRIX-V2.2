@@ -14,6 +14,7 @@ extern "C" {
 extern DMA_HandleTypeDef hdma_adc1;
 
 void MX_DMA_Init(void);
+void ECU_DMA_ADC1_Config(ADC_HandleTypeDef *hadc);
 
 #ifdef __cplusplus
 }

@@ -453,22 +453,72 @@ float flexFuelMul(void)
   return 1.0f + pct * 0.01f;
 }
 
+/*
+ * PA6 flex fuel sensor: frequency input 40 Hz (E0) … 160 Hz (E100).
+ * Software edge detection (rising) — no extra timer; accurate at 40–160 Hz.
+ */
+#ifndef FLEX_HZ_E0
+#define FLEX_HZ_E0    40.0f
+#endif
+#ifndef FLEX_HZ_E100
+#define FLEX_HZ_E100  160.0f
+#endif
+
+float engFlexHz = 0.0f; /* latest measured flex frequency */
+
+void ECU_Flex_Init(void)
+{
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  GPIO_InitTypeDef g = {0};
+  g.Pin = FLEX_Pin;
+  g.Mode = GPIO_MODE_INPUT;
+  g.Pull = GPIO_PULLUP; /* open-collector friendly; drive low from sensor */
+  HAL_GPIO_Init(FLEX_GPIO_Port, &g);
+}
+
 void serviceFlexFuel(void)
 {
-  static uint32_t lastMs;
+  static uint8_t lastLvl = 1;
+  static uint32_t lastEdgeUs = 0;
+  static float hzFilt = 0.0f;
+
+  /* Always sample edges so Hz is available; map to ethanol when enabled */
+  uint8_t lvl = (HAL_GPIO_ReadPin(FLEX_GPIO_Port, FLEX_Pin) == GPIO_PIN_SET) ? 1u : 0u;
+  if (lvl && !lastLvl) {
+    uint32_t now = micros();
+    if (lastEdgeUs != 0u) {
+      uint32_t dt = now - lastEdgeUs;
+      /* 40–160 Hz → period 6250–25000 µs; allow 20–500 Hz window */
+      if (dt >= 2000u && dt <= 50000u) {
+        float hz = 1000000.0f / (float)dt;
+        if (hzFilt < 1.0f)
+          hzFilt = hz;
+        else
+          hzFilt = hzFilt * 0.75f + hz * 0.25f;
+        engFlexHz = hzFilt;
+      }
+    }
+    lastEdgeUs = now;
+  }
+  lastLvl = lvl;
+
+  /* Timeout: no edge for 100 ms → treat as 0 Hz */
+  if (lastEdgeUs != 0u && (micros() - lastEdgeUs) > 100000u) {
+    hzFilt = 0.0f;
+    engFlexHz = 0.0f;
+    lastEdgeUs = 0u;
+  }
+
   if (!gFlexEnable)
     return;
-  uint32_t now = HAL_GetTick();
-  if ((now - lastMs) < 10000u)
-    return;
-  lastMs = now;
-  int span = (int)gFlexAdcE100 - (int)gFlexAdcE0;
-  if (span > 50 || span < -50) {
-    float e = 100.0f * ((float)((int)adcFlex - (int)gFlexAdcE0) / (float)span);
-    if (e < 0.0f) e = 0.0f;
-    if (e > 100.0f) e = 100.0f;
-    engEthanol = e;
-  }
+
+  float span = FLEX_HZ_E100 - FLEX_HZ_E0;
+  if (span < 1.0f)
+    span = 1.0f;
+  float e = (engFlexHz - FLEX_HZ_E0) * (100.0f / span);
+  if (e < 0.0f) e = 0.0f;
+  if (e > 100.0f) e = 100.0f;
+  engEthanol = e;
 }
 
 float alsFuelMul(void)

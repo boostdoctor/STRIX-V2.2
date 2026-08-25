@@ -97,22 +97,24 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**ADC1 GPIO Configuration
-    PA1     ------> ADC1_IN1
-    PA2     ------> ADC1_IN2
-    PA3     ------> ADC1_IN3
-    PA4     ------> ADC1_IN4
-    PA5     ------> ADC1_IN5
-    PA6     ------> ADC1_IN6
-    PA7     ------> ADC1_IN7
+    PA1     ------> ADC1_IN1 MAP
+    PA2     ------> ADC1_IN2 TPS
+    PA3     ------> ADC1_IN3 CLT
+    PA4     ------> ADC1_IN4 IAT
+    PA5     ------> ADC1_IN5 O2
+    PA7     ------> ADC1_IN7 VBATT
+    PA6 is FLEX frequency input (not ADC) — configured in ECU_Flex_Init
     */
     GPIO_InitStruct.Pin = MAP_ADC1_IN1_Pin|TPS_ADC1_IN2_Pin|CLT_ADC1_IN3_Pin|IAT_ADC1_IN4_Pin
-                          |O2_ADC1_IN5_Pin|KNOCK_ADC1_IN6_Pin|VBATT_ADC1_IN7_Pin;
+                          |O2_ADC1_IN5_Pin|VBATT_ADC1_IN7_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     /* USER CODE BEGIN ADC1_MspInit 1 */
-
+    /* Link DMA2 Stream0 for continuous multi-rank ADC */
+    extern void ECU_DMA_ADC1_Config(ADC_HandleTypeDef *hadc);
+    ECU_DMA_ADC1_Config(hadc);
     /* USER CODE END ADC1_MspInit 1 */
 
   }

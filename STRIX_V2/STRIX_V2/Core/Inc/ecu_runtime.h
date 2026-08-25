@@ -148,6 +148,7 @@ extern uint8_t kf_ready;
 /* Sensors eng units + raw ADC */
 extern float engMap, engTps, engEct, engIat, engBat, engO2, engPedal;
 extern float engAfr, engEthanol, engVssKph;
+extern float engFlexHz; /* PA6 flex sensor Hz */
 extern uint16_t adcEct, adcTps, adcBat, adcIat, adcMap, adcO2, adcPedal;
 extern uint16_t adcFlex;
 extern uint8_t  gFlexEnable;

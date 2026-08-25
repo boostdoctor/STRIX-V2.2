@@ -27,6 +27,7 @@ float accelEnrichMul(void);
 void  serviceAccelEnrich(void);
 float flexFuelMul(void);
 void  serviceFlexFuel(void);
+void  ECU_Flex_Init(void);
 float fuelTrimMul(void);
 float totalTrimPct(void);
 

@@ -25,6 +25,7 @@ void MX_DMA_Init(void)
 void ECU_DMA_ADC1_Config(ADC_HandleTypeDef *hadc)
 {
   if (hadc == NULL) return;
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   hdma_adc1.Instance = DMA2_Stream0;
   hdma_adc1.Init.Channel = DMA_CHANNEL_0;

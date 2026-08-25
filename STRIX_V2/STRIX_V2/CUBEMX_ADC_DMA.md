@@ -1,123 +1,38 @@
-# CubeMX — Timer-triggered ADC + DMA (STRIX V2)
+# CubeMX / firmware ADC + FLEX (STRIX V2.2)
 
-Target: **STM32F411CEU6**, 8-channel regular sequence, **TIM9 TRGO** @ 1 kHz, **DMA2** circular.
+## Analog inputs (ADC1 continuous scan + DMA2 Stream0)
 
-## 1. Enable DMA controller
-
-- Pinout / System Core → **DMA**
-- Click **Add** (or open DMA settings from ADC)
-- No need to add streams by hand if you attach from ADC (step 3)
-
-## 2. TIM9 — scan trigger (1 kHz)
-
-TIM2/3/5 are crank/cam; TIM1/4 are PWM. Use **TIM9** (APB2).
-
-| Setting | Value |
-|---------|--------|
-| Clock Source | Internal Clock |
-| Prescaler | **95** (96 MHz timer clock → 1 MHz tick, same as other TIMs) |
-| Counter Period | **999** (1 MHz / 1000 = **1 kHz** update) |
-| auto-reload preload | Enable |
-| **TRGO** | **Update Event** |
-| IRQ | Optional (not required for ADC trigger) |
-
-Formula:  
-`scan_Hz = TIMCLK / ((PSC+1) * (ARR+1))`  
-With PSC=95, ARR=999, TIMCLK=96 MHz → 1000 Hz.
-
-## 3. ADC1 — regular sequence + DMA + external trigger
-
-### Parameter settings
-
-| Parameter | Value |
-|-----------|--------|
-| Clock Prescaler | PCLK2 div4 (or div2 if within F4 ADC limits) |
-| Resolution | 12 bit |
-| Data Alignment | Right |
-| **Scan Conversion** | **Enabled** |
-| **Continuous Conversion** | **Disabled** (one sequence per TRGO) |
-| Discontinuous | Disabled |
-| **DMA Continuous Requests** | **Enabled** |
-| **External Trigger Conversion Source** | **Timer 9 Trigger Out event** |
-| External Trigger Edge | Rising edge |
-| Nbr Of Conversion | **8** |
-| EOC Selection | EOC flag at end of sequence (optional) |
-
-### Rank table (must match `ecu_adc.h` indices)
-
-| Rank | Channel | Pin | Label |
+| Rank | Channel | Pin | Signal |
 |------|---------|-----|--------|
 | 1 | IN1 | PA1 | MAP |
 | 2 | IN2 | PA2 | TPS |
-| 3 | IN3 | PA3 | CLT |
+| 3 | IN3 | PA3 | CLT / ECT |
 | 4 | IN4 | PA4 | IAT |
 | 5 | IN5 | PA5 | O2 |
-| 6 | IN6 | PA6 | KNOCK |
-| 7 | IN7 | PA7 | VBATT |
-| 8 | IN12 | PB12 | PEDAL |
+| 6 | IN7 | PA7 | VBATT |
 
-Sampling time suggestion:
+**Settings required in `MX_ADC1_Init` (already patched in `main.c`):**
 
-- MAP / TPS / O2 / Knock / Pedal / VBATT: **84 or 144 cycles**
-- CLT / IAT (NTC): **480 cycles**
-
-### DMA settings (from ADC1 → DMA Settings → Add)
-
-| Setting | Value |
-|---------|--------|
-| DMA Request | ADC1 |
-| Stream | **DMA2 Stream0** (or Stream4) |
-| Direction | Peripheral to Memory |
-| Priority | High |
-| Mode | **Circular** |
-| Peripheral Increment | Disable |
-| Memory Increment | Enable |
-| Peripheral Data Size | Half Word |
-| Memory Data Size | Half Word |
-
-## 4. NVIC
-
-- DMA2 Stream0/4 global interrupt: **optional** (circular continuous needs no ISR for basic use)
-- TIM9: not required for TRGO
-
-## 5. Init order in `main.c`
-
-```c
-MX_GPIO_Init();
-MX_DMA_Init();      /* BEFORE ADC */
-MX_ADC1_Init();
-MX_TIM9_Init();
-/* ... other timers, USB ... */
-
-ECU_Serial_Init();
-ECU_Init();         /* calls ECU_Adc_Init() → Start_DMA + TIM9 base start */
-```
-
-## 6. Firmware API
-
-```c
-#include "ecu_adc.h"
-
-ECU_Adc_Init();           /* once */
-uint16_t map = readAdc(ECU_ADC_CH_MAP);  /* non-blocking if DMA up */
-uint16_t raw = ECU_Adc_Raw(ECU_ADC_IX_TPS);
-```
-
-If DMA/TIM9 are missing from the Cube project, `readAdc()` falls back to **blocking poll** so the build still runs.
-
-## 7. Alternative: continuous DMA (no timer)
-
-If you skip TIM9:
-
+- Scan Conversion = **Enabled**
 - Continuous Conversion = **Enabled**
-- External Trigger = Software start
-- Still DMA circular, 8 ranks
-- `HAL_ADC_Start_DMA` alone is enough; omit `HAL_TIM_Base_Start(&htim9)`
+- Nbr Of Conversion = **6**
+- DMA Continuous Requests = **Enabled**
+- External trigger = Software start
+- Sampling: 84 cycles (MAP/TPS/O2/VBATT), 480 cycles (CLT/IAT)
 
-Timer trigger is preferred when you want a **fixed sample rate** (logging, knock window alignment, deterministic load).
+DMA: DMA2 Stream0 Channel0, circular, half-word, memory increment. Linked via `ECU_DMA_ADC1_Config()` from MSP / `ECU_Adc_Init()`.
 
-## 8. Verify
+## FLEX — PA6 frequency (not ADC)
 
-1. After connect, live MAP/TPS should update smoothly.
-2. Scope or debugger: `adcDmaBuf[]` changing at ~1 kHz.
-3. Crank sync must remain solid (DMA priority ≤ TIM IC priority; keep TIM2/3/5 preemption higher than DMA if you enable DMA IRQ).
+Ethanol / flex sensor is a **frequency** input:
+
+| Hz | Ethanol |
+|----|---------|
+| 40 | 0% (E0) |
+| 160 | 100% (E100) |
+
+- Pin: **PA6** digital input (pull-up), edge timing via `micros()` in `serviceFlexFuel()`
+- `ECU_Flex_Init()` called from `ECU_Init()`
+- `engFlexHz` holds measured frequency; `engEthanol` maps 40–160 Hz → 0–100% when `gFlexEnable` is set
+
+Do **not** configure PA6 as ADC_IN6.

@@ -107,9 +107,10 @@ uint16_t readAdc(uint32_t ch)
       case ECU_ADC_CH_CLT:   return adcDmaBuf[ECU_ADC_IX_CLT];
       case ECU_ADC_CH_IAT:   return adcDmaBuf[ECU_ADC_IX_IAT];
       case ECU_ADC_CH_O2:    return adcDmaBuf[ECU_ADC_IX_O2];
-      case ECU_ADC_CH_FLEX:  return adcDmaBuf[ECU_ADC_IX_FLEX]; /* PA6 flex — knock removed */
       case ECU_ADC_CH_VBATT: return adcDmaBuf[ECU_ADC_IX_VBATT];
-      case ECU_ADC_CH_PEDAL: return adcDmaBuf[ECU_ADC_IX_PEDAL];
+      /* FLEX is frequency on PA6 — not ADC */
+      case ECU_ADC_CH_FLEX:  return 0;
+      case ECU_ADC_CH_PEDAL: return 0; /* not in current rank list */
       default: return 0;
     }
   }

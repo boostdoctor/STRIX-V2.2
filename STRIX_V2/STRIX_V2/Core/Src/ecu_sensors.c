@@ -48,15 +48,15 @@ void readSensors(void) {
   float scale = CFG_BAT_ADC_REF_V / CFG_ADC_MAX;
 
   if (ecuAdcDmaRunning) {
-    /* Full frame each call — no blocking */
+    /* Full frame each call — no blocking (PA6 FLEX is frequency, not ADC) */
     adcMap   = ECU_Adc_Raw(ECU_ADC_IX_MAP);
     adcTps   = ECU_Adc_Raw(ECU_ADC_IX_TPS);
     adcEct   = ECU_Adc_Raw(ECU_ADC_IX_CLT);
     adcIat   = ECU_Adc_Raw(ECU_ADC_IX_IAT);
     adcO2    = ECU_Adc_Raw(ECU_ADC_IX_O2);
-    adcFlex  = ECU_Adc_Raw(ECU_ADC_IX_FLEX);
     adcBat   = ECU_Adc_Raw(ECU_ADC_IX_VBATT);
-    adcPedal = ECU_Adc_Raw(ECU_ADC_IX_PEDAL);
+    /* adcFlex unused for ADC — frequency path updates engEthanol */
+    adcPedal = 0;
 
     if (mapCalReady) {
       float a = (float)adcMap; int i = 0;
@@ -156,7 +156,7 @@ void readSensors(void) {
       break;
     default:
       adcO2    = readAdc(ECU_ADC_CH_O2);
-      adcFlex  = readAdc(ECU_ADC_CH_FLEX);
+      /* FLEX = frequency on PA6 */
       engO2    = adcO2 * scale;
       if (o2SensorMode == O2_MODE_WB) {
         float vv = engO2;
