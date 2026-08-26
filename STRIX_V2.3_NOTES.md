@@ -25,3 +25,11 @@ MAP and TPS: 8-sample ring buffer, published every 20 ms.
 
 ## Persist
 Engine Settings OK does not SAVE (avoids CDC drop). Use Flash/Save at RPM 0.
+
+## Wheel table (rusEFI-style shape)
+`ECU_Trigger_Rebuild()` builds a per-wheel event table:
+- `deg_x10[i]` — angle×10 of physical tooth i after the gap
+- `gap_q8` — expected gap/tooth ratio (36-1 → 2.00, 60-2 → 3.00)
+- While locked, a gap is only accepted at the table slot (after `phys` teeth)
+
+Profiles: 12-1, 24-1, 24-2, 36-1, 36-1+cam, 36-2, 36-2+cam, 60-2, 60-2+cam, 60-2+dual, Custom.

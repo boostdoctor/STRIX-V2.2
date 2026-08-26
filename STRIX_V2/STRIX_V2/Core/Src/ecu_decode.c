@@ -9,6 +9,7 @@
 #include "ecu_maps.h"
 #include "ecu_runtime.h"
 #include "ecu_internal.h"
+#include "ecu_wheels.h"
 
 /* Provided here as weak so an older ecu_runtime.h still links.
  * Strong definitions in ecu_runtime.c override these when present. */
@@ -816,11 +817,12 @@ static void __attribute__((unused)) crankPllOnGoodTooth(void)
 
 static void decoderPublishAngle(uint8_t use720)
 {
-  uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
-  float step = 360.0f / (float)teeth;
-  float a = (float)toothIndex * step;
+  uint16_t ax = ECU_Trigger_AngleX10((uint8_t)(toothIndex > 255 ? 255 : toothIndex));
+  float a = (float)ax * 0.1f + (float)gTrigAngle;
   if (use720 && cycleHalf)
     a += 360.0f;
+  while (a >= 720.0f) a -= 720.0f;
+  while (a < 0.0f) a += 360.0f;
   crankDeg = a;
 }
 
@@ -858,22 +860,25 @@ void ECU_CrankCapture(uint32_t capt)
 
   lastToothUs = now;
 
-  uint8_t miss = gMissing;
-  uint8_t nom  = (gTeeth > 1) ? gTeeth : 36;
-  if (miss < 1) miss = 0;
-  uint8_t phys = (nom > miss) ? (uint8_t)(nom - miss) : nom;
+  const EcuTriggerShape *sh = ECU_Trigger_Shape();
+  uint8_t miss = sh->missing;
+  uint8_t nom  = sh->count;
+  uint8_t phys = sh->phys;
+  if (nom < 4) nom = (gTeeth > 1) ? gTeeth : 36;
   if (phys < 2) phys = 2;
 
   uint8_t isGap = 0;
   if (miss >= 1 && prevToothDt >= 80UL) {
-    /* r16 = 16 * dt / prevToothDt ; expected gap = 16*(miss+1) */
-    uint32_t r16 = (dt << 4) / prevToothDt;
-    uint32_t need = ((uint32_t)miss + 1UL) << 4;
-    uint32_t lo = need - (need >> 2); /* 75% */
-    uint32_t hi = need + (need / 3UL); /* 133% */
-    if (lo < 20UL) lo = 20UL;
-    if (r16 >= lo && r16 <= hi)
-      isGap = 1;
+    /* Q8 ratio = 256 * dt / prev */
+    uint32_t rq = (dt << 8) / prevToothDt;
+    uint8_t expectGap = 0;
+    if (syncLocked)
+      expectGap = ECU_Trigger_ExpectGapAfter((uint8_t)teethSinceGap);
+    if (expectGap || !syncLocked) {
+      if (rq >= sh->gap_lo_q8 && rq <= sh->gap_hi_q8)
+        isGap = 1;
+    }
+    /* Locked but not at gap slot: ignore gap-like noise */
   }
 
   if (isGap) {

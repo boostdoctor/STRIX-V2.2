@@ -107,6 +107,7 @@ void ECU_ApplyWheelId(uint8_t id)
   if (w->teeth >= 2 && w->teeth <= 60) gTeeth = w->teeth;
   gMissing = w->missing;
   gCamMode = (uint8_t)w->cam;
+  ECU_Trigger_Rebuild(gTeeth, gMissing, gCamMode, gWheelId);
   syncLocked = 0;
   camSynced = (w->cam == ECU_CAM_NONE) ? 0 : camSynced;
 }
@@ -991,6 +992,7 @@ if (!strncmp(line, "SAVE", 4)) {
       if (te >= 12 && te <= 60) gTeeth = (uint8_t)te;
       if (mi >= 1 && mi < gTeeth) gMissing = (uint8_t)mi;
       gTrigAngle = (uint16_t)an;
+      ECU_Trigger_Rebuild(gTeeth, gMissing, gCamMode, gWheelId);
       syncLocked = 0;
       camSynced = 0;
     }

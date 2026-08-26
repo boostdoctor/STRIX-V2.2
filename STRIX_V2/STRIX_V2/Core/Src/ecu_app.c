@@ -9,6 +9,7 @@
 #include "ecu_maps.h"
 #include "ecu_runtime.h"
 #include "ecu_internal.h"
+#include "ecu_wheels.h"
 #include "ecu_watchdog.h"
 #include "ecu_adc.h"
 #include <string.h>
@@ -202,6 +203,7 @@ void ECU_Init(void) {
       if (blob.teeth >= 12 && blob.teeth <= 60) gTeeth = blob.teeth;
       if (blob.missing >= 1 && blob.missing < gTeeth) gMissing = blob.missing;
       gTrigAngle = blob.trigAngle;
+      ECU_Trigger_Rebuild(gTeeth, gMissing, gCamMode, gWheelId);
       ltftPct = (float)blob.ltftCenti / 100.0f;
       if (ltftPct >  25.0f) ltftPct =  25.0f;
       if (ltftPct < -25.0f) ltftPct = -25.0f;
