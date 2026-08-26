@@ -117,6 +117,13 @@ void ECU_UART_RxByte(uint8_t b) {
 
 
 void ECU_Init(void) {
+  /* V2.3 boot stages:
+   *  1. trigger  — wheel teeth/missing from flash or default
+   *  2. sensors  — ADC DMA + MAP/TPS buffer
+   *  3. actuators — GPIO / timers off until sync
+   *  4. math     — maps + bins
+   *  5. core     — IC IRQs + watchdog
+   */
   ECU_Serial_Init();
   fpPrimeUntilMs = millis() + (uint32_t)gFpPrimeMs; /* fuel pump prime on power-up */
 

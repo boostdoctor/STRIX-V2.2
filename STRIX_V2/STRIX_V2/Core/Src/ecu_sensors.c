@@ -78,18 +78,29 @@ void readSensors(void) {
     engPedal = adcToPctCal(adcPedal, pedClosedAdc, pedOpenAdc);
 
     /*
-     * MAP / TPS low-pass — sensors were too jumpy for stable crosshair / fuel.
-     * ~α=0.12 at ~1 kHz sensor loop → tau roughly 8 ms effective on noisy ADC.
+     * MAP / TPS: 8-sample ring + 20 ms publish (rusEFI-style sensor buffering).
+     * ADC can run fast; fuel/crosshair see a slowed, averaged value.
      */
     {
-      static float map_f = -1.0f, tps_f = -1.0f;
-      const float a_map = 0.12f;
-      const float a_tps = 0.15f;
-      if (map_f < 0.0f) { map_f = map_raw; tps_f = tps_raw; }
-      map_f += a_map * (map_raw - map_f);
-      tps_f += a_tps * (tps_raw - tps_f);
-      engMap = map_f;
-      engTps = tps_f;
+      static float mapRing[8], tpsRing[8];
+      static uint8_t rix = 0, rfill = 0;
+      static uint32_t lastPub = 0;
+      mapRing[rix] = map_raw;
+      tpsRing[rix] = tps_raw;
+      rix = (uint8_t)((rix + 1u) & 7u);
+      if (rfill < 8) rfill++;
+      uint32_t now = HAL_GetTick();
+      if (lastPub == 0 || (now - lastPub) >= 20u) {
+        float ms = 0.f, ts = 0.f;
+        for (uint8_t i = 0; i < rfill; i++) {
+          ms += mapRing[i];
+          ts += tpsRing[i];
+        }
+        float n = (float)rfill;
+        engMap = ms / n;
+        engTps = ts / n;
+        lastPub = now;
+      }
     }
 
     /* CLT / IAT: thermal mass is slow — refresh at most every 5 s */

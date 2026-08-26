@@ -831,7 +831,14 @@ static void decoderPublishAngle(uint8_t use720)
  */
 void ECU_CrankCapture(uint32_t capt)
 {
+  /*
+   * rusEFI-style gap-RATIO decoder (original STRIX code, not rusEFI source).
+   * ISR stays integer-only: compare dt / prevDt to (missing+1).
+   * No Kalman, no PLL, no float in the hot path — avoids lockups.
+   */
   static uint32_t lastCapt = 0;
+  static uint32_t prevToothDt = 0;
+  static uint8_t  gapHits = 0;
   uint32_t now = micros();
 
   crankEdgeCount++;
@@ -843,90 +850,60 @@ void ECU_CrankCapture(uint32_t capt)
   }
 
   uint32_t dt = capt - lastCapt;
-  uint32_t prevCapt = lastCapt;
   lastCapt = capt;
 
-  uint8_t miss = gMissing;
-  uint8_t nom  = (gTeeth > 1) ? gTeeth : 36;
-  uint8_t phys = (nom > miss) ? (uint8_t)(nom - miss) : nom;
-  if (phys < 2) phys = 2;
-
-  uint32_t Tf = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
-  if (!crankDebounceOk(dt, Tf)) {
-    toothErrors++;
-    lastCapt = prevCapt;
+  /* Hard reject bounce / stalled overflow — no rollback games */
+  if (dt < 80UL || dt > 800000UL)
     return;
-  }
-  if (dt < 40UL || dt > 800000UL) {
-    lastCapt = prevCapt;
-    return;
-  }
 
   lastToothUs = now;
 
-  /* Seed first period */
-  if (toothPeriodUs == 0) {
-    rpmAcceptPeriod(dt);
-    return;
-  }
+  uint8_t miss = gMissing;
+  uint8_t nom  = (gTeeth > 1) ? gTeeth : 36;
+  if (miss < 1) miss = 0;
+  uint8_t phys = (nom > miss) ? (uint8_t)(nom - miss) : nom;
+  if (phys < 2) phys = 2;
 
-  /* Gap test: 36-1 ≈ 2T, 60-2 ≈ 3T — wider window when locked (less false reject) */
   uint8_t isGap = 0;
-  if (miss >= 1 && Tf >= 40UL) {
-    uint32_t gapNom = Tf * (uint32_t)(miss + 1u);
-    uint32_t loPct = syncLocked ? 48UL : 58UL;
-    uint32_t hiPct = syncLocked ? 180UL : 155UL;
-    uint32_t lo = (gapNom * loPct) / 100UL;
-    uint32_t hi = (gapNom * hiPct) / 100UL;
-    if (lo < Tf + (Tf / 2UL))
-      lo = Tf + (Tf / 2UL);
-    if (dt > lo && dt < hi)
+  if (miss >= 1 && prevToothDt >= 80UL) {
+    /* r16 = 16 * dt / prevToothDt ; expected gap = 16*(miss+1) */
+    uint32_t r16 = (dt << 4) / prevToothDt;
+    uint32_t need = ((uint32_t)miss + 1UL) << 4;
+    uint32_t lo = need - (need >> 2); /* 75% */
+    uint32_t hi = need + (need / 3UL); /* 133% */
+    if (lo < 20UL) lo = 20UL;
+    if (r16 >= lo && r16 <= hi)
       isGap = 1;
   }
 
   if (isGap) {
-    /* Once locked, a long interval that matches gap timing IS the gap.
-     * Tooth-count slip (debounce drops, extra bounce) must not unlock. */
-    if (syncLocked) {
-      uint16_t minC = (phys > 8) ? (uint16_t)(phys - 8) : 1u;
-      uint16_t maxC = (uint16_t)phys + 10u;
-      uint16_t seen = (uint16_t)(teethSinceGap + 1u);
-      if (seen < minC || seen > maxC)
-        toothErrors++; /* diagnostic only — still accept the gap */
-    }
-
     missedGapStreak = 0;
-    if (goodGapStreak < 255)
-      goodGapStreak++;
-    /* 2 good gaps to lock while cranking, 3 when already running */
-    uint8_t needLock = (rpmLive < 600) ? 2u : 3u;
-    if (goodGapStreak >= needLock) {
+    if (gapHits < 255)
+      gapHits++;
+    if (gapHits >= 2) {
       syncLocked = 1;
       crankPllState = CRANK_PLL_LOCKED;
     }
 
-    /* Period from gap span (one missing-tooth interval) */
-    uint32_t tGap = dt / (uint32_t)(miss + 1u);
-    if (tGap >= 40UL && tGap <= 200000UL)
-      rpmAcceptPeriod(tGap);
+    uint32_t T = dt / ((uint32_t)miss + 1UL);
+    if (T < 80UL) T = 80UL;
+    toothPeriodUs = T;
+    toothPeriodFilt = T;
+    prevToothDt = T;
 
-    {
-      uint8_t nomT = (gTeeth > 1) ? gTeeth : 36;
-      uint16_t z = rpmFromPeriod(toothPeriodFilt, nomT);
-      if (z) {
-        if (rpmLive < 30)
-          rpmLive = z;
-        else
-          rpmLive = (uint16_t)((rpmLive * 2u + z) / 3u);
+    if (lastGapUs) {
+      uint32_t rev = now - lastGapUs;
+      if (rev >= 3000UL && rev <= 2000000UL) {
+        uint32_t z = 60000000UL / rev;
+        if (z > 15000UL) z = 15000UL;
+        if (z >= 30UL)
+          rpmLive = (uint16_t)z;
       }
     }
     lastGapUs = now;
-
     toothIndex = 0;
     teethSinceGap = 0;
 
-    /* Cam lock at the gap: expect one pulse per crank revolution.
-     * 3 consecutive revs with a pulse → lock; 5 missed windows → unlock. */
     if (camSeenThisRev) {
       camUnlockMiss = 0;
       if (camLockHits < 255)
@@ -942,7 +919,6 @@ void ECU_CrankCapture(uint32_t capt)
       }
     }
 
-    /* 720° half: cam this rev → 0, else 1. Wasted stays 0. */
     if (ignSequentialActive() || injSequentialActive()) {
       if (camSynced)
         cycleHalf = camSeenThisRev ? 0u : 1u;
@@ -952,40 +928,26 @@ void ECU_CrankCapture(uint32_t capt)
       cycleHalf = 0;
     }
     camSeenThisRev = 0;
-
     decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
-    crankPllOnGoodGap();
     return;
   }
 
   /* Normal tooth */
-  if (Tf >= 40UL) {
-    uint32_t lo = syncLocked ? (Tf * 35UL) / 100UL : (Tf * 45UL) / 100UL;
-    uint32_t hi = syncLocked ? (Tf * 175UL) / 100UL : (Tf * 160UL) / 100UL;
-    if (lo < 40UL) lo = 40UL;
-    if (dt < lo) {
-      toothErrors++;
-      lastCapt = prevCapt;
-      return;
-    }
-    if (miss == 0 && dt > hi) {
-      toothErrors++;
-      lastCapt = prevCapt;
-      return;
-    }
-    toothPeriodFilt = (Tf * 3UL + dt) / 4UL;
-    toothPeriodUs = toothPeriodFilt;
-  }
+  prevToothDt = dt;
+  toothPeriodUs = dt;
+  if (toothPeriodFilt)
+    toothPeriodFilt = (toothPeriodFilt * 3UL + dt) / 4UL;
+  else
+    toothPeriodFilt = dt;
 
-  if (Tf >= 40UL && dt >= 40UL && dt < 200000UL)
-    rpmAcceptPeriod(dt);
-  {
-    uint16_t z = rpmFromPeriod(toothPeriodFilt, nom);
-    if (z) {
+  if (nom >= 2 && toothPeriodFilt >= 80UL) {
+    uint32_t z = 60000000UL / (toothPeriodFilt * (uint32_t)nom);
+    if (z > 15000UL) z = 15000UL;
+    if (z >= 30UL) {
       if (rpmLive < 30)
-        rpmLive = z;
+        rpmLive = (uint16_t)z;
       else
-        rpmLive = (uint16_t)((rpmLive * 3u + z) / 4u);
+        rpmLive = (uint16_t)((rpmLive * 3u + (uint16_t)z) / 4u);
     }
   }
 
@@ -994,7 +956,6 @@ void ECU_CrankCapture(uint32_t capt)
   if (teethSinceGap < 60000)
     teethSinceGap++;
 
-  /* Even wheel: roll every nominal teeth */
   if (miss == 0 && toothIndex >= nom) {
     toothIndex = 0;
     if (ignSequentialActive() || injSequentialActive()) {
@@ -1004,28 +965,19 @@ void ECU_CrankCapture(uint32_t capt)
       cycleHalf = 0;
     }
     camSeenThisRev = 0;
-    if (!syncLocked && toothIndex == 0)
-      syncLocked = 1;
+    syncLocked = 1;
   }
 
-  /* Missed gap: ~4 full wheels of teeth with no gap-like interval.
-   * Need 6 of those events before unlock. */
   if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 4u + 4u)) {
     missedGapStreak++;
     teethSinceGap = 0;
     if (missedGapStreak >= 6) {
       syncLocked = 0;
       camSynced = 0;
-      goodGapStreak = 0;
+      gapHits = 0;
       crankPllState = CRANK_PLL_SEEK;
       syncLosses++;
     }
-  }
-
-  /* Even-wheel lock after a clean set of teeth */
-  if (miss == 0 && !syncLocked && toothIndex >= (phys * 2u / 3u)) {
-    syncLocked = 1;
-    crankPllState = CRANK_PLL_LOCKED;
   }
 
   decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
