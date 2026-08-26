@@ -1008,12 +1008,12 @@ void ECU_CrankCapture(uint32_t capt)
       syncLocked = 1;
   }
 
-  /* Missed gap: almost two full wheels of teeth with no gap-like interval.
-   * One noisy rev must not drop lock. */
-  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 2u + 4u)) {
+  /* Missed gap: ~4 full wheels of teeth with no gap-like interval.
+   * Need 6 of those events before unlock. */
+  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 4u + 4u)) {
     missedGapStreak++;
     teethSinceGap = 0;
-    if (missedGapStreak >= 3) {
+    if (missedGapStreak >= 6) {
       syncLocked = 0;
       camSynced = 0;
       goodGapStreak = 0;
