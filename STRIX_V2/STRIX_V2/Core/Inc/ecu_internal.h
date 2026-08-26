@@ -70,8 +70,8 @@ void ECU_Adc_Init(void);
 void ECU_SanitizeMapBins(void);
 void ECU_Adc_Stop(void);
 
-void rpmKalmanReset(void);
-uint16_t rpmKalmanUpdate(float z, float dt_s); /* returns filtered RPM */
+void rpmKalmanReset(void); /* period median+IIR reset (name kept for link compat) */
+uint16_t rpmKalmanUpdate(float z, float dt_s);
 uint8_t syncQualityPct(void);
 void ECU_CrankCapture(uint32_t capt);
 void ECU_CamCapture(uint32_t capt);

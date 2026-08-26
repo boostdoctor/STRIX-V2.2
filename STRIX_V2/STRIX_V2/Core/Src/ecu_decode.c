@@ -81,17 +81,11 @@ void ECU_CamCapture(uint32_t capt) {
 
   lastCamUs = now;
   lastCamEdgeUs = now;
-  camUnlockMiss = 0;
   camPulseSeen = 1;
   camSeenThisRev = 1;
   cam1PhaseDeg = crankDeg;
-
-  /* Cam home flag only. cycleHalf is applied at the next gap so
-   * crankDeg does not jump ±360° mid-revolution. */
-  if (camLockHits < 255)
-    camLockHits++;
-  if (camLockHits >= 2)
-    camSynced = 1;
+  /* Lock is decided at the crank gap (one expected pulse per rev).
+   * Do not lock here — noise bursts would set camSynced in <2 ms. */
 }
 
 
@@ -188,336 +182,94 @@ void ECU_CrankCam_Start(void)
   }
 }
 
-/** Reset RPM Kalman (stall / first edge). */
-void rpmKalmanReset(void)
+/* ── RPM / period filter (no Kalman) ──────────────────────────
+ * Missing-tooth decoders work in *period*, not RPM.
+ *   1. Keep last 3 accepted tooth periods
+ *   2. Median of 3 rejects a single spike
+ *   3. IIR on the median: T = (3T + Tmed)/4
+ * RPM = 60e6 / (T * teeth)
+ * Kalman / 2-state CV filter removed — it fought gap lock and
+ * produced a second RPM that the ISR did not actually use.
+ */
+static uint32_t perHist[3];
+static uint8_t  perHistN = 0;
+
+static uint32_t periodMedian3(uint32_t a, uint32_t b, uint32_t c)
 {
+  if (a > b) { uint32_t t = a; a = b; b = t; }
+  if (b > c) { uint32_t t = b; b = c; c = t; }
+  if (a > b) { uint32_t t = a; a = b; b = t; }
+  return b;
+}
+
+static void rpmPeriodReset(void)
+{
+  perHist[0] = perHist[1] = perHist[2] = 0;
+  perHistN = 0;
+  toothPeriodUs = 0;
+  toothPeriodFilt = 0;
   kf_rpm = 0.0f;
   kf_acc = 0.0f;
-  kf_p00 = 1.0e4f;
-  kf_p01 = 0.0f;
-  kf_p10 = 0.0f;
-  kf_p11 = 1.0e4f;
   kf_ready = 0;
   kf_nis_ema = 1.0f;
-  kf_R_adapt = 150.0f;
-  kf_q_adapt = 12000.0f;
 }
 
-
-/**
- * Adaptive process noise spectral density q_a [(rpm/s²)²·s].
- * Raise Q during tip-in (high |accel| or high NIS) so filter tracks;
- * lower Q when steady so RPM is smooth.
- */
-float rpmKalmanAdaptQ(float dt_s)
+static uint16_t rpmFromPeriod(uint32_t T, uint8_t teeth)
 {
-  float q = 8000.0f; /* baseline */
-
-  if (!syncLocked)
-    q *= 2.5f;
-  else if (gapConfirm < 2)
-    q *= 1.5f;
-
-  /* |accel| schedule */
-  float a = kf_acc;
-  if (a < 0.0f) a = -a;
-  if (a > 5000.0f)
-    q *= 3.0f;
-  else if (a > 2500.0f)
-    q *= 2.0f;
-  else if (a > 1000.0f)
-    q *= 1.4f;
-  else if (a < 200.0f && syncLocked)
-    q *= 0.6f; /* very steady */
-
-  /* Innovation history: NIS>>1 means model is too stiff → raise Q */
-  if (kf_nis_ema > 4.0f)
-    q *= 2.0f;
-  else if (kf_nis_ema > 2.0f)
-    q *= 1.4f;
-  else if (kf_nis_ema < 0.3f && syncLocked)
-    q *= 0.7f; /* overconfident residuals → can lower Q */
-
-  /* Low RPM: more process uncertainty */
-  if (kf_rpm < 800.0f)
-    q *= 1.5f;
-
-  /* Clamp */
-  if (q < 1500.0f) q = 1500.0f;
-  if (q > 80000.0f) q = 80000.0f;
-
-  /* Smooth q_a itself so Q does not jump every tooth */
-  kf_q_adapt = 0.90f * kf_q_adapt + 0.10f * q;
-  (void)dt_s;
-  return kf_q_adapt;
+  if (T < 40UL || teeth < 2)
+    return 0;
+  float z = 60000000.0f / ((float)T * (float)teeth);
+  if (z < 30.0f) return 0;
+  if (z > 15000.0f) z = 15000.0f;
+  return (uint16_t)(z + 0.5f);
 }
 
-/**
- * Adaptive measurement noise R [RPM²].
- * Base from operating point; then innovation-based inflate/deflate.
- * y = innovation, S0 = p00 + R_base (before adapt).
- */
-float rpmKalmanAdaptR(float z_rpm, float y, float p00)
+/** Accept one tooth (or gap-equivalent) period into the filter. */
+static uint32_t rpmAcceptPeriod(uint32_t dt)
 {
-  /* Base R from sync + RPM band */
-  float R = syncLocked ? 90.0f : 320.0f;
-  if (z_rpm < 500.0f)
-    R *= 2.0f;
-  else if (z_rpm < 1000.0f)
-    R *= 1.5f;
-  else if (z_rpm < 2000.0f)
-    R *= 1.15f;
-  else if (z_rpm > 5000.0f)
-    R *= 0.85f; /* cleaner tooth periods at high RPM */
+  if (dt < 40UL)
+    return toothPeriodFilt ? toothPeriodFilt : dt;
+  if (dt > 400000UL)
+    dt = 400000UL;
 
-  if (toothErrors > 15)
-    R *= 1.3f;
-
-  float S0 = p00 + R;
-  if (S0 < 1.0f) S0 = 1.0f;
-
-  /* Normalized innovation squared χ² ≈ y²/S  (1-DOF) */
-  float nis = (y * y) / S0;
-  /* EMA of NIS for long-term adapt */
-  kf_nis_ema = 0.92f * kf_nis_ema + 0.08f * nis;
-
-  /* Soft inflation curve: R *= max(1, c * nis) with limit */
-  if (nis > 9.0f)       /* ~3σ */
-    R *= 5.0f;
-  else if (nis > 4.0f)  /* ~2σ */
-    R *= 2.5f;
-  else if (nis > 2.0f)
-    R *= 1.5f;
-  else if (nis < 0.25f && syncLocked)
-    R *= 0.85f; /* consistently small residuals */
-
-  /* Blend with previous R to avoid gain chatter */
-  kf_R_adapt = 0.75f * kf_R_adapt + 0.25f * R;
-  if (kf_R_adapt < 40.0f) kf_R_adapt = 40.0f;
-  if (kf_R_adapt > 5000.0f) kf_R_adapt = 5000.0f;
-  return kf_R_adapt;
+  if (perHistN < 3) {
+    perHist[perHistN++] = dt;
+    toothPeriodFilt = dt;
+    toothPeriodUs = dt;
+    return dt;
+  }
+  perHist[0] = perHist[1];
+  perHist[1] = perHist[2];
+  perHist[2] = dt;
+  uint32_t med = periodMedian3(perHist[0], perHist[1], perHist[2]);
+  if (toothPeriodFilt == 0)
+    toothPeriodFilt = med;
+  else
+    toothPeriodFilt = (toothPeriodFilt * 3UL + med) / 4UL;
+  toothPeriodUs = toothPeriodFilt;
+  return toothPeriodFilt;
 }
 
-/**
- * 2-state constant-velocity Kalman filter for engine RPM.
- *
- * State:    x = [ rpm ,  accel_rpm_per_s ]^T
- * Model:    x_k = F x_{k-1} + w ,   F = [ 1  dt ]
- *                                   [ 0   1 ]
- * Measure:  z = H x + v ,           H = [ 1  0 ]
- *
- * Predict:  x̂⁻ = F x̂
- *           P⁻  = F P Fᵀ + Q
- * Update:   y  = z - H x̂⁻
- *           S  = H P⁻ Hᵀ + R
- *           K  = P⁻ Hᵀ S⁻¹
- *           x̂  = x̂⁻ + K y
- *           P  = (I-KH) P⁻ (I-KH)ᵀ + K R Kᵀ   (Joseph form)
- *
- * Q scales with dt; R is higher when unlocked / low RPM / large innovation.
- * Returns filtered RPM in [0, 15000].
- */
+void rpmKalmanReset(void)
+{
+  rpmPeriodReset();
+}
+
 uint16_t rpmKalmanUpdate(float z_rpm, float dt_s)
 {
-  /* ---- sanitize inputs ---- */
-  if (z_rpm < 0.0f)     z_rpm = 0.0f;
+  /* Kept so older call sites link. RPM is owned by rpmAcceptPeriod(). */
+  (void)dt_s;
+  if (z_rpm < 0.0f) z_rpm = 0.0f;
   if (z_rpm > 15000.0f) z_rpm = 15000.0f;
-  if (dt_s < 1.0e-5f)   dt_s = 1.0e-5f;
-  if (dt_s > 0.5f)      dt_s = 0.5f;
-
-  /* ---- cold start: seed state from first measurement ---- */
-  if (!kf_ready) {
-    kf_rpm = z_rpm;
-    kf_acc = 0.0f;
-    kf_p00 = 400.0f;   /* RPM variance */
-    kf_p01 = 0.0f;
-    kf_p10 = 0.0f;
-    kf_p11 = 2500.0f;  /* accel variance */
-    kf_ready = 1;
-    return (uint16_t)(z_rpm + 0.5f);
-  }
-
-  const float dt = dt_s;
-  const float dt2 = dt * dt;
-
-  /* ========== PREDICT ========== */
-  /* Coast with accel only when locked and dt is tooth-scale; else hold RPM.
-   * Prevents slow RPM "count-up" from kf_acc when edges are sparse/noisy. */
-  float x0, x1;
-  if (!syncLocked || dt > 0.05f) {
-    x0 = kf_rpm;
-    x1 = 0.0f;
-    kf_acc = 0.0f;
-  } else {
-    x0 = kf_rpm + kf_acc * dt;
-    x1 = kf_acc;
-  }
-
-  /* Adaptive process noise Q (discrete white-noise accel) */
-  float q_a = rpmKalmanAdaptQ(dt);
-  float Q00 = q_a * dt2 * dt2 / 4.0f;
-  float Q01 = q_a * dt2 * dt / 2.0f;
-  float Q11 = q_a * dt2;
-  Q00 += 20.0f * dt; /* small RPM random walk */
-
-  /* P⁻ = F P Fᵀ + Q
-   * F P Fᵀ:
-   *  p00' = p00 + dt*(p10+p01) + dt²*p11
-   *  p01' = p01 + dt*p11
-   *  p10' = p10 + dt*p11
-   *  p11' = p11
-   */
-  float p00 = kf_p00 + dt * (kf_p10 + kf_p01) + dt2 * kf_p11 + Q00;
-  float p01 = kf_p01 + dt * kf_p11 + Q01;
-  float p10 = kf_p10 + dt * kf_p11 + Q01;
-  float p11 = kf_p11 + Q11;
-
-  /* ========== UPDATE ========== */
-  float y = z_rpm - x0;                 /* innovation (before R adapt) */
-  float R = rpmKalmanAdaptR(z_rpm, y, p00);
-  float S = p00 + R;
-  if (S < 1.0f)
-    S = 1.0f;
-
-  /* Kalman gain K = P⁻ Hᵀ / S ,  Hᵀ = [1; 0] → K = [p00; p10] / S */
-  float k0 = p00 / S;
-  float k1 = p10 / S;
-  /* Clamp gains for numerical safety */
-  if (k0 < 0.0f) k0 = 0.0f;
-  if (k0 > 1.0f) k0 = 1.0f;
-  if (k1 >  50.0f) k1 =  50.0f;
-  if (k1 < -50.0f) k1 = -50.0f;
-
-  /* x̂ = x̂⁻ + K y */
-  x0 += k0 * y;
-  x1 += k1 * y;
-
-  /* Joseph form: P = (I-KH) P⁻ (I-KH)ᵀ + K R Kᵀ
-   * I-KH = [ 1-k0   0 ]
-   *        [  -k1   1 ]
-   */
-  float a00 = 1.0f - k0;
-  float a10 = -k1;
-  /* A = I-KH;  AP = A * P⁻ */
-  float ap00 = a00 * p00;
-  float ap01 = a00 * p01;
-  float ap10 = a10 * p00 + p10;
-  float ap11 = a10 * p01 + p11;
-  /* (AP) Aᵀ  +  K R Kᵀ */
-  float p00n = ap00 * a00 + k0 * k0 * R;
-  float p01n = ap01 + k0 * k1 * R;          /* ap01 * 1 + … */
-  float p10n = ap10 * a00 + k1 * k0 * R;
-  float p11n = ap11 + k1 * k1 * R;
-
-  /* Symmetry + positive-definite floors */
-  p01n = 0.5f * (p01n + p10n);
-  p10n = p01n;
-  if (p00n < 1.0f)   p00n = 1.0f;
-  if (p11n < 1.0f)   p11n = 1.0f;
-  if (p00n > 1.0e6f) p00n = 1.0e6f;
-  if (p11n > 1.0e7f) p11n = 1.0e7f;
-
-  /* Commit state */
-  if (x0 < 0.0f)      x0 = 0.0f;
-  if (x0 > 15000.0f)  x0 = 15000.0f;
-  if (x1 >  25000.0f) x1 =  25000.0f;
-  if (x1 < -25000.0f) x1 = -25000.0f;
-
-  kf_rpm = x0;
-  kf_acc = x1;
-  kf_p00 = p00n;
-  kf_p01 = p01n;
-  kf_p10 = p10n;
-  kf_p11 = p11n;
-
-  return (uint16_t)(kf_rpm + 0.5f);
+  kf_rpm = z_rpm;
+  return (uint16_t)(z_rpm + 0.5f);
 }
 
-
-
-/**
- * Schedule complementary α (weight on fast/Kalman path).
- *
- * Raises α when:
- *  - filters agree (low |fast - slow|)
- *  - locked and mid/high RPM
- *  - high |accel| (need response - still keep some slow bias)
- * Lowers α when:
- *  - cranking / unlocked
- *  - large disagreement (trust rev more to pull bias out)
- *  - high tooth error rate
- */
-float rpmAlphaSchedule(float rpm_fast, float rpm_slow)
-{
-  float alpha = 0.88f; /* baseline when locked & calm — favour filtered tooth path */
-
-  /* Sync state */
-  if (!syncLocked)
-    alpha = 0.65f;
-  else if (gapConfirm < 2)
-    alpha = 0.72f;
-
-  /* RPM band */
-  float rpm_ref = rpm_fast;
-  if (rpm_slow > 1.0f)
-    rpm_ref = 0.5f * (rpm_fast + rpm_slow);
-  if (rpm_ref < 400.0f)
-    alpha -= 0.20f;       /* heavy rev weight while cranking */
-  else if (rpm_ref < 900.0f)
-    alpha -= 0.10f;
-  else if (rpm_ref > 4500.0f)
-    alpha += 0.05f;       /* tooth path cleaner at high RPM */
-
-  /* Agreement: |fast - slow| / mean */
-  float mean = 0.5f * (rpm_fast + rpm_slow);
-  if (mean < 100.0f)
-    mean = 100.0f;
-  float rel = (rpm_fast - rpm_slow);
-  if (rel < 0.0f) rel = -rel;
-  rel /= mean;
-  if (rel < 0.02f)
-    alpha += 0.08f;       /* excellent agreement */
-  else if (rel < 0.05f)
-    alpha += 0.03f;
-  else if (rel > 0.15f)
-    alpha -= 0.12f;       /* disagree - trust rev */
-  else if (rel > 0.08f)
-    alpha -= 0.06f;
-
-  /* Transient: |accel| high → prefer fast path */
-  float a = kf_acc;
-  if (a < 0.0f) a = -a;
-  if (a > 3000.0f)
-    alpha += 0.06f;
-  else if (a > 1500.0f)
-    alpha += 0.03f;
-
-  /* Tooth errors → more conservative (rev) */
-  if (toothErrors > 20 && toothErrors > (syncLosses + 5))
-    alpha -= 0.08f;
-
-  /* Clamp usable range */
-  if (alpha < 0.40f) alpha = 0.40f;
-  if (alpha > 0.95f) alpha = 0.95f;
-  return alpha;
-}
-
-/**
- * Complementary blend of fast (tooth/Kalman) and slow (rev) RPM.
- * alpha = weight on fast path (0..1). Typical 0.75-0.90 when locked.
- */
 uint16_t rpmComplementaryBlend(float rpm_fast, float rpm_slow, float alpha)
 {
   if (alpha < 0.0f) alpha = 0.0f;
   if (alpha > 1.0f) alpha = 1.0f;
-  if (rpm_fast < 0.0f) rpm_fast = 0.0f;
-  if (rpm_slow < 0.0f) rpm_slow = 0.0f;
-  if (rpm_fast > 15000.0f) rpm_fast = 15000.0f;
-  if (rpm_slow > 15000.0f) rpm_slow = 15000.0f;
   float y = alpha * rpm_fast + (1.0f - alpha) * rpm_slow;
-  if (y < 0.0f) y = 0.0f;
-  if (y > 15000.0f) y = 15000.0f;
-  /* Keep Kalman state consistent with blended output */
   kf_rpm = y;
   return (uint16_t)(y + 0.5f);
 }
@@ -1114,8 +866,7 @@ void ECU_CrankCapture(uint32_t capt)
 
   /* Seed first period */
   if (toothPeriodUs == 0) {
-    toothPeriodUs = dt;
-    toothPeriodFilt = dt;
+    rpmAcceptPeriod(dt);
     return;
   }
 
@@ -1169,29 +920,42 @@ void ECU_CrankCapture(uint32_t capt)
       crankPllState = CRANK_PLL_LOCKED;
     }
 
-    /* Period from gap span */
+    /* Period from gap span (one missing-tooth interval) */
     uint32_t tGap = dt / (uint32_t)(miss + 1u);
-    if (tGap >= 40UL && tGap <= 200000UL) {
-      if (toothPeriodFilt)
-        toothPeriodFilt = (toothPeriodFilt * 2UL + tGap) / 3UL;
-      else
-        toothPeriodFilt = tGap;
-      toothPeriodUs = toothPeriodFilt;
-    }
+    if (tGap >= 40UL && tGap <= 200000UL)
+      rpmAcceptPeriod(tGap);
 
-    if (lastGapUs) {
-      uint32_t revUs = now - lastGapUs;
-      if (revUs >= 3000UL && revUs <= 2000000UL) {
-        float z = 60000000.0f / (float)revUs;
-        if (z > 15000.0f) z = 15000.0f;
-        if (z >= 30.0f)
-          rpmLive = (uint16_t)(0.6f * (float)rpmLive + 0.4f * z + 0.5f);
+    {
+      uint8_t nomT = (gTeeth > 1) ? gTeeth : 36;
+      uint16_t z = rpmFromPeriod(toothPeriodFilt, nomT);
+      if (z) {
+        if (rpmLive < 30)
+          rpmLive = z;
+        else
+          rpmLive = (uint16_t)((rpmLive * 2u + z) / 3u);
       }
     }
     lastGapUs = now;
 
     toothIndex = 0;
     teethSinceGap = 0;
+
+    /* Cam lock at the gap: expect one pulse per crank revolution.
+     * 3 consecutive revs with a pulse → lock; 5 missed windows → unlock. */
+    if (camSeenThisRev) {
+      camUnlockMiss = 0;
+      if (camLockHits < 255)
+        camLockHits++;
+      if (camLockHits >= 3)
+        camSynced = 1;
+    } else if (syncLocked) {
+      if (camUnlockMiss < 255)
+        camUnlockMiss++;
+      if (camUnlockMiss >= 5) {
+        camSynced = 0;
+        camLockHits = 0;
+      }
+    }
 
     /* 720° half: cam this rev → 0, else 1. Wasted stays 0. */
     if (ignSequentialActive() || injSequentialActive()) {
@@ -1228,14 +992,16 @@ void ECU_CrankCapture(uint32_t capt)
     toothPeriodUs = toothPeriodFilt;
   }
 
-  if (toothPeriodUs >= 40UL && nom >= 2) {
-    float z = 60000000.0f / ((float)toothPeriodUs * (float)nom);
-    if (z > 15000.0f) z = 15000.0f;
-    if (z < 30.0f) z = 0.0f;
-    if (rpmLive < 30)
-      rpmLive = (uint16_t)(z + 0.5f);
-    else
-      rpmLive = (uint16_t)(0.7f * (float)rpmLive + 0.3f * z + 0.5f);
+  if (Tf >= 40UL && dt >= 40UL && dt < 200000UL)
+    rpmAcceptPeriod(dt);
+  {
+    uint16_t z = rpmFromPeriod(toothPeriodFilt, nom);
+    if (z) {
+      if (rpmLive < 30)
+        rpmLive = z;
+      else
+        rpmLive = (uint16_t)((rpmLive * 3u + z) / 4u);
+    }
   }
 
   if (toothIndex < 65000)
