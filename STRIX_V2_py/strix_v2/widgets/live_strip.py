@@ -116,8 +116,7 @@ class LiveStrip(QFrame):
         self.cells["load"].set_value(f"{load_pct:.0f}%")
         self.cells["sync"].set_value(
             "LOCK" if sync else "—",
-            "#55ff99" if sync else "#ff7777",
-            alarm=(not sync and rpm > 200),
+            "#55ff99" if sync else "#aaaaaa",
         )
         self.cells["cam"].set_value(
             "LOCK" if cam_on else "—",
@@ -167,8 +166,7 @@ class LiveStrip(QFrame):
         afr = float(live.get("afr") or 0)
         if afr > 22:
             alarms.append("AFR ERROR")
-        if not sync and rpm > 200:
-            alarms.append("SYNC LOST")
+        # SYNC state stays on the SYNC cell — no red banner under the strip
         if alarms:
             self._alarm.setText("  ·  ".join(alarms))
             self._alarm.show()

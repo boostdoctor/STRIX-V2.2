@@ -555,7 +555,27 @@ class MainWindow(QMainWindow):
         self.status.showMessage("Connected — reading ECU maps & settings…")
 
     def _on_status(self, msg: str):
-        self.status.showMessage(msg, 5000)
+        self.status.showMessage(msg, 4000)
+        low = (msg or "").lower()
+        if any(s in low for s in ("clearcomm", "permission", "command 22", "access is denied")):
+            if self.connected and not getattr(self, "_reopening", False):
+                self._reopening = True
+                QTimer.singleShot(1200, self._try_reopen_port)
+
+    def _try_reopen_port(self):
+        self._reopening = False
+        port = ""
+        if hasattr(self, "port_combo"):
+            port = self.port_combo.currentText().strip()
+        if not port:
+            return
+        ok, err = self.worker.connect_port(port)
+        if ok:
+            self.connected = True
+            self.status.showMessage("Serial reopened after USB hiccup", 3000)
+        else:
+            self.connected = False
+            self.status.showMessage(f"Reopen failed: {err}", 5000)
 
     def _tx(self, cmd: str) -> bool:
         if not cmd.endswith("\n"):
@@ -1250,9 +1270,7 @@ class MainWindow(QMainWindow):
         self._tx("SET:MAPSCALE,%d,%d\n" % (map_min, map_max))
         self.engine["map_bins"] = make_map_bins(map_max, map_min)
         self._apply_load_bins()
-        # Persist MAP scale in ECU flash (writes when RPM = 0)
-        self._tx("SAVE\n")
-
+        # RAM only — explicit Flash/Save writes NVM (SAVE here drops STM32 CDC)
         self._tx("GETCFG\n")
 
     def _apply_motorsport_tab(self):

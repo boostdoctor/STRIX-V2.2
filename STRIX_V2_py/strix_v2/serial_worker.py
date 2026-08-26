@@ -54,10 +54,14 @@ class SerialWorker(QObject):
                         dev = r"\\.\\" + port
                 except ValueError:
                     pass
-            self.ser = serial.Serial(dev, self.baud, timeout=0.05, write_timeout=1.0)
+            # Do not toggle DTR/RTS — STM32 CDC resets the MCU on DTR.
+            self.ser = serial.Serial(
+                dev, self.baud, timeout=0.05, write_timeout=0.4,
+                dsrdtr=False, rtscts=False,
+            )
             try:
-                self.ser.dtr = True
-                self.ser.rts = True
+                self.ser.dtr = False
+                self.ser.rts = False
             except Exception:
                 pass
             try:
@@ -65,7 +69,7 @@ class SerialWorker(QObject):
                 self.ser.reset_output_buffer()
             except Exception:
                 pass
-            time.sleep(0.15)
+            time.sleep(0.25)
             self._stop.clear()
             self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
             self._rx_thread.start()
@@ -99,10 +103,24 @@ class SerialWorker(QObject):
             data += b"\n"
         with self._lock:
             try:
+                if not self.ser or not self.ser.is_open:
+                    return False
                 self.ser.write(data)
                 return True
             except Exception as e:
-                self.status.emit(f"TX fail: {e}")
+                msg = str(e)
+                # Windows: ClearCommError / PermissionError 13 / command 22
+                # after CDC re-enum or flash erase — do not hammer the dead handle
+                self.status.emit(f"TX fail: {msg}")
+                if any(s in msg.lower() for s in (
+                    "clearcomm", "permission", "13", "command 22",
+                    "access is denied", "device", "oserror",
+                )):
+                    try:
+                        self.ser.close()
+                    except Exception:
+                        pass
+                    self.ser = None
                 return False
 
     def _rx_loop(self) -> None:
@@ -131,5 +149,18 @@ class SerialWorker(QObject):
                 if len(buf) > 8192:
                     del buf[:-4096]
             except Exception as e:
-                self.status.emit(f"RX error: {e}")
-                time.sleep(0.1)
+                msg = str(e)
+                self.status.emit(f"RX error: {msg}")
+                if any(s in msg.lower() for s in (
+                    "clearcomm", "permission", "command 22", "access is denied",
+                )):
+                    with self._lock:
+                        try:
+                            if self.ser:
+                                self.ser.close()
+                        except Exception:
+                            pass
+                        self.ser = None
+                    time.sleep(0.4)
+                else:
+                    time.sleep(0.1)

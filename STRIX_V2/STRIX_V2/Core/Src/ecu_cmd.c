@@ -647,9 +647,7 @@ if (!strncmp(line, "SAVE", 4)) {
       }
       /* Sensor range change invalidates multi-point cal (use linear scale) */
       mapCalReady = 0;
-      mapsDirty = 1;
-      savePending = 1;
-      persistDueMs = millis() + 50u; /* NVM write in ECU_Loop when RPM=0 */
+      mapsDirty = 1; /* explicit SAVE only — flash here kills CDC */
       {
         char b[48];
         snprintf(b, sizeof b, "OK:MAPSCALE,%.0f,%.0f\r\n", (double)mn, (double)mx);
@@ -678,8 +676,6 @@ if (!strncmp(line, "SAVE", 4)) {
       }
       mapCalReady = 0;
       mapsDirty = 1;
-      savePending = 1;
-      persistDueMs = millis() + 50u;
       {
         char b[40];
         snprintf(b, sizeof b, "OK:MAPMAX,%.0f\r\n", (double)mx);
