@@ -47,6 +47,7 @@ char gDeviceUid[16] = "STRIXV2";
 uint8_t mapCellR = 0, mapCellC = 0; /* last lookup cell */
 int8_t  baseAdvDeg = 0;   /* map only, pre-retard */
 float   baseInjMs  = 0;   /* map only, pre-trim */
+float   gVePct = 0;
 uint8_t sensorPhase = 0;
 
 

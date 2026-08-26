@@ -24,7 +24,7 @@ class ProgramSettingsDialog(QDialog):
         self.setWindowTitle("Program settings")
         self.setMinimumWidth(360)
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("Optional live-strip fields (RPM/TPS/MAP/ECT/IAT/SYNC always shown):"))
+        lay.addWidget(QLabel("Optional live-strip fields (RPM/TPS/MAP/ECT/IAT always shown; SYNC/CAM optional):"))
         self.checks: dict[str, QCheckBox] = {}
         for key, lab in OPTIONAL_STRIP:
             cb = QCheckBox(lab)

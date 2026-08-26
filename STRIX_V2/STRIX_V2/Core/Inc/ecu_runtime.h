@@ -99,6 +99,7 @@ extern uint8_t sensEctEn, sensIatEn, sensO2En, sensMapEn, sensTpsEn;
 extern uint8_t mapCellR, mapCellC;
 extern int8_t  baseAdvDeg;
 extern float   baseInjMs;
+extern float   gVePct; /* live VE% from map */
 extern uint8_t sensorPhase;
 
 /* Config live */

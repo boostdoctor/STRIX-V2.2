@@ -32,7 +32,7 @@ void serviceInjection(void) {
     return;
   }
   uint16_t pw = injPwUs;
-  if (pw < 800) pw = 800;
+  if (pw < 1000) pw = 1000;
   if (pw > 20000) pw = 20000;
 
   for (uint8_t i = 1; i <= MAX_CYL; i++) {
@@ -132,7 +132,7 @@ void serviceInjection(void) {
           tr *= 1.0f + idleFuelLookup(engEct, (float)rpmLive) * 0.01f;
         }
         pwc = (uint16_t)((float)pw * tr);
-        if (pwc < 800) pwc = 800;
+        if (pwc < 1000) pwc = 1000;
         if (pwc > 20000) pwc = 20000;
         ECU_INJ_HI(i);
         injOn[i] = 1;

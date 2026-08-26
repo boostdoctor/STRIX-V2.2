@@ -87,7 +87,13 @@ class LiveStrip(QFrame):
         outer.addWidget(self._alarm)
 
     def set_optional(self, keys: set[str] | list[str]):
+        from strix_v2.constants import ALWAYS_STRIP
         self._optional_keys = set(keys)
+        always = set(ALWAYS_STRIP)
+        # VE / LOAD / INJ / IGN stay on the main strip
+        always.update(("ve", "pw", "load", "ign"))
+        for k, w in self.cells.items():
+            w.setVisible(k in always or k in self._optional_keys)
 
     def update_live(self, live: dict, map_kpa_max: float | int | None = None,
                     load_mode: str | None = None):
@@ -114,14 +120,16 @@ class LiveStrip(QFrame):
             if load_pct > 200.0:
                 load_pct = 200.0
         self.cells["load"].set_value(f"{load_pct:.0f}%")
-        self.cells["sync"].set_value(
-            "LOCK" if sync else "—",
-            "#55ff99" if sync else "#aaaaaa",
-        )
-        self.cells["cam"].set_value(
-            "LOCK" if cam_on else "—",
-            "#55ff99" if cam_on else "#888888",
-        )
+        if "sync" in self.cells and self.cells["sync"].isVisible():
+            self.cells["sync"].set_value(
+                "LOCK" if sync else "—",
+                "#55ff99" if sync else "#aaaaaa",
+            )
+        if "cam" in self.cells and self.cells["cam"].isVisible():
+            self.cells["cam"].set_value(
+                "LOCK" if cam_on else "—",
+                "#55ff99" if cam_on else "#888888",
+            )
         self.cells["ect"].set_value("ERROR" if ect > 205 else f"{ect:.0f}°C", "#ff3333" if ect > 205 else ("#ff7777" if ect > 105 else None), alarm=ect > 205)
         afr = float(live.get("afr") or 0)
         self.cells["afr"].set_value("ERROR" if afr > 22 else f"{afr:.1f}", "#ff3333" if afr > 22 else None, alarm=afr > 22)

@@ -11,6 +11,7 @@ KEY_MAP = {
     "TMP": "ect",
     "IAT": "iat",
     "BAT": "bat",
+    "VE": "ve",
     "LOAD": "load", "SYNCQ": "syncq",
     "SYNC": "sync",
     "CAM": "cam",

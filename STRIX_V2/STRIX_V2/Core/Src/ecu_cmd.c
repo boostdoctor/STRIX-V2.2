@@ -72,11 +72,12 @@ void sendTelemetry(void) {
               : alsFuelPct;
 
   n = snprintf(b, sizeof b,
-    "AFR:%.2f,LAM:%.3f,MCELL:%u:%u,BASEIGN:%d,BASEINJ:%u,O2:%.2f,STFT:%.1f,LTFT:%.1f,TTRIM:%.1f,CL:%u,LOAD:%.2f,SYNCQ:%u,"
+    "AFR:%.2f,LAM:%.3f,VE:%.1f,MCELL:%u:%u,BASEIGN:%d,BASEINJ:%u,O2:%.2f,STFT:%.1f,LTFT:%.1f,TTRIM:%.1f,CL:%u,LOAD:%.2f,SYNCQ:%u,"
     "PWUS:%u,INJMODE:%u,SEQ:%u,BATCHRPM:%u,IDLE:%u,IRPM:%.0f,ITHR:%.1f,DASH:%.1f,"
     "DFCO:%u,OFC:%u,VVT1:%u,VVT2:%u,C1PH:%.0f,C2PH:%.0f,ASE:%u,CLTCH:%u,"
     "LC:%u,ALS:%u,ALSTO:%u,ALSF:%.0f,FFS:%u,INJMSK:%u,FLOOD:%u,LCD:%u,LCF:%.1f,LCR:%.1f\r\n",
     (double)engAfr, (double)afrToLambda(engAfr),
+    (double)gVePct,
     (unsigned)mapCellR, (unsigned)mapCellC,
     (int)baseAdvDeg, (unsigned)(baseInjMs * 10.0f + 0.5f),
     (double)engO2,

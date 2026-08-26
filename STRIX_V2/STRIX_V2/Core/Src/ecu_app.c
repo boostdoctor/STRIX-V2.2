@@ -267,6 +267,7 @@ void ECU_Loop(void) {
     float ve = injMs; /* lookup returned VE % when gVeMode */
     if (ve < 0.0f) ve = 0.0f;
     if (ve > 150.0f) ve = 150.0f;
+    gVePct = ve;
     float mapAbs = engMap;
     if (mapAbs < 20.0f) mapAbs = 20.0f;
     float iatK = engIat + 273.15f;
@@ -289,13 +290,14 @@ void ECU_Loop(void) {
     pw = baseMs * 1000.0f * o2FuelMul() * coldStartEnrichMul()
        * afterStartMul() * alsFuelMul() * accelEnrichMul();
   } else {
+    gVePct = injMs; /* duty-mode cell (ms) — tuner labels INJ */
     pw = injMs * 1000.0f * o2FuelMul() * coldStartEnrichMul()
        * afterStartMul() * alsFuelMul() * accelEnrichMul();
   }
   if (launchDecayActive && launchDecayFuelPct > 0.1f) {
     pw *= (1.0f + launchDecayFuelPct * 0.01f);
   }
-  if (pw < 400) pw = 400; /* min injection 400 us */
+  if (pw < 1000) pw = 1000; /* min injector duty 1.0 ms */
   {
     float mxUs = gMaxInjMs * 1000.0f;
     if (mxUs < 1000.0f) mxUs = 1000.0f;

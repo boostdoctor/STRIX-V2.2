@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_STYLE)
 
         self.engine = default_engine_settings()
-        self.strip_optional: set[str] = {"ign", "pw", "bat", "afr", "load", "cam", "dwell"}
+        self.strip_optional: set[str] = {"ign", "pw", "bat", "afr", "load", "dwell"}
         self.meta = load_device_meta()
         self.device_id = get_or_create_device_id()
         self.live = default_live()
@@ -698,6 +698,16 @@ class MainWindow(QMainWindow):
         )
         rpm = float(self.live.get("rpm") or 0)
         load = self._live_load_for_maps()
+        # VE% strip = current fuel-map cell (same bins as crosshair)
+        if not self.live.get("ve"):
+            try:
+                r = int(getattr(self.map_inj, "live_r", -1))
+                c = int(getattr(self.map_inj, "live_c", -1))
+                if r >= 0 and c >= 0:
+                    self.live["ve"] = float(self.map_inj.table[r][c])
+            except Exception:
+                pass
+
         self.map_ign.set_live(rpm, load)
         self.map_inj.set_live(rpm, load)
         if hasattr(self, "map_afr") and self.tabs.isTabVisible(self._afr_tab_idx):

@@ -93,9 +93,11 @@ OPTIONAL_STRIP = [
     ("ltft", "LTFT"),
     ("load", "LOAD"),
     ("dwell", "Dwell"),
+    ("sync", "SYNC"),
+    ("cam", "CAM"),
 ]
 
-ALWAYS_STRIP = ("rpm", "tps", "map", "ect", "iat", "sync")
+ALWAYS_STRIP = ("rpm", "tps", "map", "ect", "iat")
 
 DEVICE_ID_FILE = "strix_device_id.json"
 SETTINGS_FILE = "strix_v2_settings.json"
