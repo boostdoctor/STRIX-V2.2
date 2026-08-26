@@ -40,7 +40,7 @@ enum {
 };
 
 /** Return 1 if edge should be accepted, 0 if bounce/noise. */
-static uint8_t crankDebounceOk(uint32_t dt_us, uint32_t Tfilt)
+static uint8_t __attribute__((unused)) crankDebounceOk(uint32_t dt_us, uint32_t Tfilt)
 {
   uint32_t minUs = CRANK_DEB_ABS_US;
   if (Tfilt >= 100UL) {
@@ -215,7 +215,7 @@ static void rpmPeriodReset(void)
   kf_nis_ema = 1.0f;
 }
 
-static uint16_t rpmFromPeriod(uint32_t T, uint8_t teeth)
+static uint16_t __attribute__((unused)) rpmFromPeriod(uint32_t T, uint8_t teeth)
 {
   if (T < 40UL || teeth < 2)
     return 0;
@@ -226,7 +226,7 @@ static uint16_t rpmFromPeriod(uint32_t T, uint8_t teeth)
 }
 
 /** Accept one tooth (or gap-equivalent) period into the filter. */
-static uint32_t rpmAcceptPeriod(uint32_t dt)
+static uint32_t __attribute__((unused)) rpmAcceptPeriod(uint32_t dt)
 {
   if (dt < 40UL)
     return toothPeriodFilt ? toothPeriodFilt : dt;
@@ -720,7 +720,7 @@ static void crankPllEnterSeek(void)
   crankPeriodPllReset();
 }
 
-static void crankPllOnGoodGap(void)
+static void __attribute__((unused)) crankPllOnGoodGap(void)
 {
   pllSoftErr = 0;
   missedGapStreak = 0;
@@ -973,10 +973,10 @@ void ECU_CrankCapture(uint32_t capt)
     syncLocked = 1;
   }
 
-  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 4u + 4u)) {
+  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 6u + 4u)) {
     missedGapStreak++;
     teethSinceGap = 0;
-    if (missedGapStreak >= 6) {
+    if (missedGapStreak >= 8) {
       syncLocked = 0;
       camSynced = 0;
       gapHits = 0;

@@ -97,8 +97,13 @@ void readSensors(void) {
           ts += tpsRing[i];
         }
         float n = (float)rfill;
-        engMap = ms / n;
-        engTps = ts / n;
+        float mapAvg = ms / n;
+        float tpsAvg = ts / n;
+        /* Hysteresis: ignore sub-threshold chatter */
+        if (engMap <= 0.0f || mapAvg > engMap + 1.5f || mapAvg + 1.5f < engMap)
+          engMap = mapAvg;
+        if (engTps <= 0.0f || tpsAvg > engTps + 1.5f || tpsAvg + 1.5f < engTps)
+          engTps = tpsAvg;
         lastPub = now;
       }
     }
@@ -182,8 +187,10 @@ void readSensors(void) {
         if (map_f < 0.0f) { map_f = map_raw; tps_f = tps_raw; }
         map_f += 0.12f * (map_raw - map_f);
         tps_f += 0.15f * (tps_raw - tps_f);
-        engMap = map_f;
-        engTps = tps_f;
+        if (engMap <= 0.0f || map_f > engMap + 1.5f || map_f + 1.5f < engMap)
+          engMap = map_f;
+        if (engTps <= 0.0f || tps_f > engTps + 1.5f || tps_f + 1.5f < engTps)
+          engTps = tps_f;
       }
       break;
     case 1:

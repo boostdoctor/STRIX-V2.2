@@ -63,6 +63,16 @@ void serviceInjection(void) {
   float band = 360.0f / (float)((gTeeth > 0) ? gTeeth : 36);
   if (band < 4.0f) band = 4.0f;
   if (band > 20.0f) band = 20.0f;
+  if (rpmLive < 1500 && band < 25.0f) band = 25.0f;
+  {
+    uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+    uint32_t age = (lastToothUs && now > lastToothUs) ? (now - lastToothUs) : 0;
+    if (T >= 80u && age < T * 3u) {
+      float extra = 360.0f * ((float)age / ((float)T * (float)((gTeeth > 1) ? gTeeth : 36)));
+      if (extra > 0.0f && extra < 30.0f)
+        deg = wrapAngle(deg + extra, cycle);
+    }
+  }
   float eoiOfs = gEoiBtdc;
   if (eoiOfs < 10.0f) eoiOfs = 10.0f;
   if (eoiOfs > 540.0f) eoiOfs = 540.0f;

@@ -37,9 +37,10 @@ static float wastedTdc(uint8_t cyl)
 
 void scheduleCoils(uint32_t now)
 {
-  enum { COIL_HANG_US = 8000u };
+  /* 20 ms hang at cranking — 8 ms was cutting dwell before TDC at low RPM */
+  uint32_t hangUs = (rpmLive < 1200) ? 20000u : 8000u;
   for (uint8_t i = 1; i <= MAX_CYL; i++) {
-    if (coilState[i] && (now - coilStartUs[i]) > COIL_HANG_US) {
+    if (coilState[i] && (now - coilStartUs[i]) > hangUs) {
       ECU_IGN_LO(i);
       coilState[i] = 0;
       coilFired[i] = 1;
@@ -82,6 +83,21 @@ void scheduleCoils(uint32_t now)
   float band = 360.0f / (float)((gTeeth > 0) ? gTeeth : 36);
   if (band < 4.0f) band = 4.0f;
   if (band > 20.0f) band = 20.0f;
+  /* Cyl 1/4 fire near the gap — tooth step can skip a narrow window at low RPM */
+  if (rpmLive < 1500) {
+    if (band < 25.0f) band = 25.0f;
+  }
+
+  /* Interpolate between teeth so we don't sit on a stale gap angle */
+  {
+    uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+    uint32_t age = (lastToothUs && now > lastToothUs) ? (now - lastToothUs) : 0;
+    if (T >= 80u && age < T * 3u) {
+      float extra = 360.0f * ((float)age / ((float)T * (float)((gTeeth > 1) ? gTeeth : 36)));
+      if (extra > 0.0f && extra < 30.0f)
+        deg = wrapAngle(deg + extra, cycle);
+    }
+  }
 
   uint8_t n = gCyl;
   if (n > MAX_CYL) n = MAX_CYL;
@@ -100,7 +116,7 @@ void scheduleCoils(uint32_t now)
     /* Re-arm after leaving the fire tooth (works on 360 and 720). */
     if (coilFired[i] && !coilState[i]) {
       float past = angDelta(deg, fire, cycle);
-      if (past > 40.0f && past < (cycle - 10.0f))
+      if (past > 20.0f && past < (cycle - 8.0f))
         coilFired[i] = 0;
     }
 
@@ -108,7 +124,18 @@ void scheduleCoils(uint32_t now)
     float dwellStart = wrapAngle(fire - dwellDeg, cycle);
     uint8_t inDwell = angleActive(deg, dwellStart, fire, cycle);
 #endif
-    uint8_t atFire = (angDelta(deg, fire, cycle) < (band * 2.0f));
+    /* Hit if we are in the window OR we crossed fire since last pass */
+    float pastFire = angDelta(deg, fire, cycle);
+    uint8_t atFire = (pastFire < (band * 2.0f));
+    static float prevDeg[MAX_CYL + 1];
+    {
+      float prev = prevDeg[i];
+      float a0 = angDelta(prev, fire, cycle);
+      /* previous sample was before fire (large past), now just after (small past) */
+      if (a0 > (cycle * 0.5f) && pastFire < (band * 3.0f))
+        atFire = 1;
+      prevDeg[i] = deg;
+    }
 
 #if CFG_COIL_SMART
     if (!coilFired[i] && atFire) {
