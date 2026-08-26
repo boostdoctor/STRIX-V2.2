@@ -305,7 +305,7 @@ void ECU_Loop(void) {
       kf_acc = 0.0f;
     }
   }
-  if (lastToothUs != 0 && (micros() - lastToothUs) > 500000UL) {
+  if (lastToothUs != 0 && (micros() - lastToothUs) > 800000UL) {
     /* 0.5 s without accepted tooth = stalled / unlock */
     if (syncLocked) syncLosses++;
     syncLocked = 0;

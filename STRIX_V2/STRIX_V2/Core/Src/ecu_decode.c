@@ -874,8 +874,8 @@ void ECU_CrankCapture(uint32_t capt)
   uint8_t isGap = 0;
   if (miss >= 1 && Tf >= 40UL) {
     uint32_t gapNom = Tf * (uint32_t)(miss + 1u);
-    uint32_t loPct = syncLocked ? 55UL : 60UL;
-    uint32_t hiPct = syncLocked ? 160UL : 150UL;
+    uint32_t loPct = syncLocked ? 48UL : 58UL;
+    uint32_t hiPct = syncLocked ? 180UL : 155UL;
     uint32_t lo = (gapNom * loPct) / 100UL;
     uint32_t hi = (gapNom * hiPct) / 100UL;
     if (lo < Tf + (Tf / 2UL))
@@ -885,29 +885,14 @@ void ECU_CrankCapture(uint32_t capt)
   }
 
   if (isGap) {
-    uint8_t countOk = 1;
+    /* Once locked, a long interval that matches gap timing IS the gap.
+     * Tooth-count slip (debounce drops, extra bounce) must not unlock. */
     if (syncLocked) {
-      /* Wider tooth-count window — starter/accel often ±4–6 teeth off ideal */
-      uint16_t minC = (phys > 6) ? (uint16_t)(phys - 5) : 1u;
-      uint16_t maxC = (uint16_t)phys + 6u;
+      uint16_t minC = (phys > 8) ? (uint16_t)(phys - 8) : 1u;
+      uint16_t maxC = (uint16_t)phys + 10u;
       uint16_t seen = (uint16_t)(teethSinceGap + 1u);
       if (seen < minC || seen > maxC)
-        countOk = 0;
-    }
-    if (!countOk) {
-      /* Soft error: do NOT drop lock on first few mismatches */
-      toothErrors++;
-      missedGapStreak++;
-      if (missedGapStreak >= 8) {
-        syncLocked = 0;
-        goodGapStreak = 0;
-        crankPllState = CRANK_PLL_SEEK;
-        syncLosses++;
-        teethSinceGap = 0;
-        toothIndex = 0;
-      }
-      /* Keep period filter; continue tracking without full reset when soft */
-      return;
+        toothErrors++; /* diagnostic only — still accept the gap */
     }
 
     missedGapStreak = 0;
@@ -1023,11 +1008,12 @@ void ECU_CrankCapture(uint32_t capt)
       syncLocked = 1;
   }
 
-  /* Missed gap: too many teeth without gap — more margin before unlock */
-  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)phys + 12u) {
+  /* Missed gap: almost two full wheels of teeth with no gap-like interval.
+   * One noisy rev must not drop lock. */
+  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 2u + 4u)) {
     missedGapStreak++;
     teethSinceGap = 0;
-    if (missedGapStreak >= 8) {
+    if (missedGapStreak >= 3) {
       syncLocked = 0;
       camSynced = 0;
       goodGapStreak = 0;
