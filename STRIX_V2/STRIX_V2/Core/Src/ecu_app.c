@@ -18,6 +18,8 @@
 #include <stdint.h>
 
 /* ---- lines 325-397 ---- */
+float gVePct = 0.0f;
+
 void ecuInjGpioInit(void)
 {
   GPIO_InitTypeDef g = {0};
