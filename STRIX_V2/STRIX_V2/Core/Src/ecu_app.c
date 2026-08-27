@@ -299,7 +299,11 @@ void ECU_Loop(void) {
   if (launchDecayActive && launchDecayFuelPct > 0.1f) {
     pw *= (1.0f + launchDecayFuelPct * 0.01f);
   }
-  if (pw < 1000) pw = 1000; /* min injector duty 1.0 ms */
+  /* Cranking (<200 RPM): fixed 3.0 ms prime pulse. Else floor 1.0 ms. */
+  if (rpmLive > 0 && rpmLive < 200 && !dfcoActive && !floodClearActive)
+    pw = 3000.0f;
+  else if (pw < 1000)
+    pw = 1000;
   {
     float mxUs = gMaxInjMs * 1000.0f;
     if (mxUs < 1000.0f) mxUs = 1000.0f;

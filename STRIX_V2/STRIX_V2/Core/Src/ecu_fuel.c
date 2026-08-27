@@ -32,7 +32,10 @@ void serviceInjection(void) {
     return;
   }
   uint16_t pw = injPwUs;
-  if (pw < 1000) pw = 1000;
+  if (rpmLive > 0 && rpmLive < 200)
+    pw = 3000; /* cranking standard 3 ms */
+  else if (pw < 1000)
+    pw = 1000;
   if (pw > 20000) pw = 20000;
 
   for (uint8_t i = 1; i <= MAX_CYL; i++) {
@@ -44,11 +47,37 @@ void serviceInjection(void) {
     }
   }
 
-  if (!syncLocked || rpmLive < 30 || toothPeriodUs < 40) {
+  /* Allow cranking fire as soon as the wheel is locked — RPM may read <30. */
+  if (!syncLocked || toothPeriodUs < 40) {
     for (uint8_t i = 1; i <= MAX_CYL; i++) {
       if (!injOn[i]) {
         ECU_INJ_LO(i);
         injReq[i] = 0;
+      }
+    }
+    return;
+  }
+
+  /* Cranking: one 3 ms batch pulse per rev at the gap (tooth 0/1). */
+  if (rpmLive < 200) {
+    uint8_t n = gCyl;
+    if (n > MAX_CYL) n = MAX_CYL;
+    if (n < 1) n = 1;
+    uint8_t atGap = (toothIndex <= 1);
+    if (atGap) {
+      for (uint8_t i = 1; i <= n; i++) {
+        if (injOn[i] || injFiredCyc[i])
+          continue;
+        if (injDisableMask & (1u << (i - 1)))
+          continue;
+        ECU_INJ_HI(i);
+        injOn[i] = 1;
+        injEndUs[i] = now + pw;
+      }
+    } else {
+      for (uint8_t i = 1; i <= n; i++) {
+        if (!injOn[i] && injFiredCyc[i] && toothIndex > 2)
+          injFiredCyc[i] = 0;
       }
     }
     return;
@@ -132,7 +161,8 @@ void serviceInjection(void) {
           tr *= 1.0f + idleFuelLookup(engEct, (float)rpmLive) * 0.01f;
         }
         pwc = (uint16_t)((float)pw * tr);
-        if (pwc < 1000) pwc = 1000;
+        if (rpmLive < 200) { if (pwc < 3000) pwc = 3000; }
+        else if (pwc < 1000) pwc = 1000;
         if (pwc > 20000) pwc = 20000;
         ECU_INJ_HI(i);
         injOn[i] = 1;
