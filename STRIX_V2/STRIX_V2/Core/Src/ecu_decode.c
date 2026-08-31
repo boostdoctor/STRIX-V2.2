@@ -815,6 +815,25 @@ static void __attribute__((unused)) crankPllOnGoodTooth(void)
   /* SOFTERR → LOCKED only via good gaps (PLL_GAPS_RECOVER) */
 }
 
+
+/* Reject bounce and 15k-cap noise. Max 12000 RPM. */
+static void rpmAccept(uint32_t periodUs, uint8_t teeth)
+{
+  if (periodUs < 80UL || teeth < 2)
+    return;
+  uint32_t z = 60000000UL / (periodUs * (uint32_t)teeth);
+  if (z < 20UL || z > 12000UL)
+    return;
+  if (rpmLive >= 40u) {
+    uint32_t prev = rpmLive;
+    if (z > prev * 3UL + 200UL)
+      return; /* single spike */
+    rpmLive = (uint16_t)((prev * 3u + (uint16_t)z) / 4u);
+  } else {
+    rpmLive = (uint16_t)z;
+  }
+}
+
 static void decoderPublishAngle(uint8_t use720)
 {
   uint16_t ax = ECU_Trigger_AngleX10((uint8_t)(toothIndex > 255 ? 255 : toothIndex));
@@ -855,7 +874,7 @@ void ECU_CrankCapture(uint32_t capt)
   lastCapt = capt;
 
   /* Hard reject bounce / stalled overflow — no rollback games */
-  if (dt < 40UL || dt > 800000UL)
+  if (dt < 120UL || dt > 800000UL)
     return;
 
   lastToothUs = now;
@@ -868,10 +887,10 @@ void ECU_CrankCapture(uint32_t capt)
   if (phys < 2) phys = 2;
 
   uint8_t isGap = 0;
-  if (miss >= 1 && prevToothDt >= 40UL) {
+  if (miss >= 1 && prevToothDt >= 150UL && prevToothDt <= 20000UL) {
     uint32_t rq = (dt << 8) / prevToothDt;
     if (rq >= sh->gap_lo_q8 && rq <= sh->gap_hi_q8)
-      isGap = 1; /* ratio wins even if tooth count slipped */
+      isGap = 1;
   }
 
   if (isGap) {
@@ -884,19 +903,15 @@ void ECU_CrankCapture(uint32_t capt)
     }
 
     uint32_t T = dt / ((uint32_t)miss + 1UL);
-    if (T < 80UL) T = 80UL;
+    if (T < 150UL) T = 150UL;
     toothPeriodUs = T;
     toothPeriodFilt = T;
     prevToothDt = T;
 
     if (lastGapUs) {
       uint32_t rev = now - lastGapUs;
-      if (rev >= 3000UL && rev <= 2000000UL) {
-        uint32_t z = 60000000UL / rev;
-        if (z > 15000UL) z = 15000UL;
-        if (z >= 20UL)
-          rpmLive = (uint16_t)z;
-      }
+      if (rev >= 5000UL && rev <= 2000000UL)
+        rpmAccept(rev / (uint32_t)nom, nom);
     }
     lastGapUs = now;
     toothIndex = 0;
@@ -934,8 +949,8 @@ void ECU_CrankCapture(uint32_t capt)
 
   /* Normal tooth — skip period update on long outliers (false gaps) */
   {
-    uint32_t rq = (prevToothDt >= 40UL) ? ((dt << 8) / prevToothDt) : 256UL;
-    if (rq <= 400UL) { /* <= ~1.56x — real tooth */
+    uint32_t rq = (prevToothDt >= 120UL) ? ((dt << 8) / prevToothDt) : 256UL;
+    if (rq >= 160UL && rq <= 400UL) { /* 0.63x .. 1.56x */
       prevToothDt = dt;
       toothPeriodUs = dt;
       if (toothPeriodFilt)
@@ -945,12 +960,7 @@ void ECU_CrankCapture(uint32_t capt)
     }
   }
 
-  if (nom >= 2 && toothPeriodFilt >= 40UL) {
-    uint32_t z = 60000000UL / (toothPeriodFilt * (uint32_t)nom);
-    if (z > 15000UL) z = 15000UL;
-    if (z >= 20UL)
-      rpmLive = (uint16_t)z; /* snap to period — no 3/4 hang */
-  }
+  rpmAccept(toothPeriodFilt ? toothPeriodFilt : toothPeriodUs, nom);
 
   if (toothIndex < 65000)
     toothIndex++;
