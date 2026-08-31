@@ -80,21 +80,17 @@ void scheduleCoils(uint32_t now)
   float deg = crankDeg;
   float adv = (float)ignAdvanceDeg;
   float trig = (float)gTrigAngle;
-  float band = 360.0f / (float)((gTeeth > 0) ? gTeeth : 36);
-  if (band < 4.0f) band = 4.0f;
-  if (band > 20.0f) band = 20.0f;
-  /* Cyl 1/4 fire near the gap — tooth step can skip a narrow window at low RPM */
-  if (rpmLive < 1500) {
-    if (band < 25.0f) band = 25.0f;
-  }
+  /* Tight window — 50° made every coil look "at fire" and dumped them together. */
+  float band = 8.0f;
+  if (rpmLive < 400)
+    band = 16.0f;
 
-  /* Interpolate between teeth so we don't sit on a stale gap angle */
   {
     uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
     uint32_t age = (lastToothUs && now > lastToothUs) ? (now - lastToothUs) : 0;
-    if (T >= 80u && age < T * 3u) {
+    if (T >= 80u && age < T * 2u) {
       float extra = 360.0f * ((float)age / ((float)T * (float)((gTeeth > 1) ? gTeeth : 36)));
-      if (extra > 0.0f && extra < 30.0f)
+      if (extra > 0.0f && extra < 20.0f)
         deg = wrapAngle(deg + extra, cycle);
     }
   }
@@ -102,6 +98,11 @@ void scheduleCoils(uint32_t now)
   uint8_t n = gCyl;
   if (n > MAX_CYL) n = MAX_CYL;
   if (!seq && n > 4) n = 4;
+
+  static uint32_t lastCoilFireUs[MAX_CYL + 1];
+  uint32_t revUs = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+  revUs *= (uint32_t)((gTeeth > 1) ? gTeeth : 36);
+  if (revUs < 4000u) revUs = 4000u;
 
   for (uint8_t i = 1; i <= n; i++) {
     if (rpmCutActive && gRpmCutMode == 1 && (i & 1u)) {
@@ -111,71 +112,60 @@ void scheduleCoils(uint32_t now)
     }
 
     float tdc = seq ? tdcDeg(i) : wastedTdc(i);
+    /* crankDeg already includes trigger offset from the decoder */
     float fire = wrapAngle(tdc + trig - adv, cycle);
 
-    static uint32_t lastCoilFireUs[MAX_CYL + 1];
-    uint32_t revUs = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
-    revUs *= (uint32_t)((gTeeth > 1) ? gTeeth : 36);
-    if (revUs < 3000u) revUs = 3000u;
-    uint8_t armed = ((now - lastCoilFireUs[i]) >= (revUs * 6u / 10u));
+    uint8_t armed = ((now - lastCoilFireUs[i]) >= (revUs / 2u));
     if (armed && !coilState[i])
       coilFired[i] = 0;
+
+    float pastFire = angDelta(deg, fire, cycle);
+    float until = cycle - pastFire; /* degrees to next fire */
+    uint8_t atFire = (pastFire < band);
 
 #if !CFG_COIL_SMART
     float dwellStart = wrapAngle(fire - dwellDeg, cycle);
     uint8_t inDwell = angleActive(deg, dwellStart, fire, cycle);
+    if (!inDwell && until <= dwellDeg && until > 0.5f)
+      inDwell = 1;
 #endif
-    /* Hit if we are in the window OR we crossed fire since last pass */
-    float pastFire = angDelta(deg, fire, cycle);
-    uint8_t atFire = (pastFire < (band * 2.0f));
-    static float prevDeg[MAX_CYL + 1];
-    {
-      float prev = prevDeg[i];
-      float a0 = angDelta(prev, fire, cycle);
-      /* previous sample was before fire (large past), now just after (small past) */
-      if (a0 > (cycle * 0.5f) && pastFire < (band * 3.0f))
-        atFire = 1;
-      prevDeg[i] = deg;
-    }
 
 #if CFG_COIL_SMART
-    if (!coilFired[i] && armed && atFire) {
-      if (!coilState[i]) {
-        ECU_IGN_HI(i);
-        coilState[i] = 1;
-        coilStartUs[i] = now;
-        lastCoilFireUs[i] = now;
-      }
+    /* Charge before TDC; spark at fire. Never start after TDC. */
+    if (!coilFired[i] && armed && !coilState[i] && until <= dwellDeg && until > band) {
+      ECU_IGN_HI(i);
+      coilState[i] = 1;
+      coilStartUs[i] = now;
     }
-    if (coilState[i] && (now - coilStartUs[i]) >= (uint32_t)CFG_DWELL_NOM_US) {
+    if (coilState[i] && (atFire || (now - coilStartUs[i]) >= (uint32_t)CFG_DWELL_NOM_US)) {
       ECU_IGN_LO(i);
       dwellActualUs = (uint16_t)(now - coilStartUs[i]);
       coilState[i] = 0;
       coilFired[i] = 1;
+      lastCoilFireUs[i] = now;
     }
 #else
     if (!coilFired[i] && armed && !coilState[i] && inDwell) {
       ECU_IGN_HI(i);
       coilState[i] = 1;
       coilStartUs[i] = now;
-      lastCoilFireUs[i] = now;
     }
-    if (coilState[i] && !coilFired[i]) {
-      uint8_t timeUp = (now - coilStartUs[i]) >= dwellTargetUs;
-      if (atFire || timeUp) {
-        ECU_IGN_LO(i);
-        dwellActualUs = (uint16_t)(now - coilStartUs[i]);
-        coilState[i] = 0;
-        coilFired[i] = 1;
-      }
+    if (coilState[i] && !coilFired[i] && (atFire || (now - coilStartUs[i]) >= dwellTargetUs)) {
+      ECU_IGN_LO(i);
+      dwellActualUs = (uint16_t)(now - coilStartUs[i]);
+      coilState[i] = 0;
+      coilFired[i] = 1;
+      lastCoilFireUs[i] = now;
     }
 #endif
     if (coilState[i] && (now - coilStartUs[i]) > (uint32_t)CFG_DWELL_MAX_US + 500U) {
       ECU_IGN_LO(i);
       coilState[i] = 0;
       coilFired[i] = 1;
+      lastCoilFireUs[i] = now;
     }
   }
+
 }
 
 

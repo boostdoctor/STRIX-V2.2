@@ -154,6 +154,7 @@ class SerialWorker(QObject):
                         continue
                     if line:
                         self._rxq.append(line)
+                        self.line_received.emit(line)
                 if len(buf) > 8192:
                     del buf[:-4096]
             except Exception as e:

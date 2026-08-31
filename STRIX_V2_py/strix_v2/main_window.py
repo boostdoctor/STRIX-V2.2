@@ -103,6 +103,7 @@ class MainWindow(QMainWindow):
         self.worker = SerialWorker()
         # RX lives on a raw threading.Thread (not QThread). Force queued
         # slots so QTimer.singleShot never runs off the GUI thread.
+        self.worker.line_received.connect(self._on_line, Qt.QueuedConnection)
         self.worker.connected_changed.connect(self._on_conn, Qt.QueuedConnection)
         self.worker.status.connect(self._on_status, Qt.QueuedConnection)
         self._tx_timer = QTimer(self)
@@ -693,8 +694,8 @@ class MainWindow(QMainWindow):
         return float(self.live.get("map") or 0)
 
     def _refresh_ui(self):
-        if self.connected:
-            for line in self.worker.drain(100):
+        if self.worker.is_open:
+            for line in self.worker.drain(120):
                 self._on_line(line)
         self.strip.update_live(
             self.live,
