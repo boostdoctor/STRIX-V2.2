@@ -874,6 +874,17 @@ class MainWindow(QMainWindow):
             self.engine["req_fuel_ms"] = float(parts["REQFUEL"])
         if "FLOW" in parts:
             self.engine["inj_flow_cc"] = float(parts["FLOW"])
+        if "RPMLIM" in parts:
+            raw = parts["RPMLIM"].strip()
+            try:
+                if ":" in raw:
+                    a, b = raw.split(":", 1)
+                    self.engine["rpm_limit"] = int(float(a))
+                    self.engine["rpm_cut_mode"] = "Soft" if int(float(b)) else "Hard"
+                else:
+                    self.engine["rpm_limit"] = int(float(raw))
+            except ValueError:
+                pass
         if "MAPSCALE" in parts:
             # "min:max" from CFG:...MAPSCALE:0:500
             raw = parts["MAPSCALE"].strip()
@@ -1190,6 +1201,10 @@ class MainWindow(QMainWindow):
                     float(self.engine.get("fuel_pressure_rated_bar") or 3.0),
                 ))
                 self._tx("SET:VEMODE,%d\n" % (1 if ve_on else 0))
+                self._tx("SET:RPMLIM,%d,%d\n" % (
+                    int(self.engine.get("rpm_limit") or 7000),
+                    1 if str(self.engine.get("rpm_cut_mode") or "Hard").lower().startswith("soft") else 0,
+                ))
                 self._tx("SET:IGNLIM,%d,%d\n" % (
                     int(self.engine.get("max_advance") or 40),
                     int(self.engine.get("max_retard") or 10),
@@ -1282,6 +1297,10 @@ class MainWindow(QMainWindow):
         map_max = int(eng.get("map_kpa_max") or 240)
         if map_max < map_min + 20:
             map_max = map_min + 20
+        self._tx("SET:RPMLIM,%d,%d\n" % (
+            int(eng.get("rpm_limit") or 7000),
+            1 if str(eng.get("rpm_cut_mode") or "Hard").lower().startswith("soft") else 0,
+        ))
         self._tx("SET:MAPSCALE,%d,%d\n" % (map_min, map_max))
         self.engine["map_bins"] = make_map_bins(map_max, map_min)
         self._apply_load_bins()

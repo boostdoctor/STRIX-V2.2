@@ -1001,17 +1001,18 @@ if (!strncmp(line, "SAVE", 4)) {
   }
 
   if (!strncmp(line, "GETCFG", 6)) {
-    char b[192];
+    char b[240];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f\r\n",
+             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
              (unsigned)gWheelId, (unsigned)gCamMode,
              (unsigned)(boostEnable ? (bstOpenLoop ? 2u : 1u) : 0u),
              (double)gEoiBtdc,
-             (double)gMapKpaMin, (double)gMapKpaMax);
+             (double)gMapKpaMin, (double)gMapKpaMax,
+             (unsigned)gRpmLimit, (unsigned)gRpmCutMode);
     uartWrite(b);
     return;
   }
@@ -1140,6 +1141,22 @@ if (!strncmp(line, "SAVE", 4)) {
     gMaxAdvDeg = (int8_t)a;
     gMaxRetDeg = (int8_t)r;
     uartWrite("OK:IGNLIM\r\n");
+    return;
+  }
+
+  if (!strncmp(line, "SET:RPMLIM,", 11)) {
+    int lim = 7000, cut = 0;
+    sscanf(line + 11, "%d,%d", &lim, &cut);
+    if (lim < 2000) lim = 2000;
+    if (lim > 12000) lim = 12000;
+    gRpmLimit = (uint16_t)lim;
+    gRpmCutMode = cut ? 1 : 0;
+    {
+      char b[40];
+      snprintf(b, sizeof b, "OK:RPMLIM,%u,%u\r\n",
+               (unsigned)gRpmLimit, (unsigned)gRpmCutMode);
+      uartWrite(b);
+    }
     return;
   }
 
