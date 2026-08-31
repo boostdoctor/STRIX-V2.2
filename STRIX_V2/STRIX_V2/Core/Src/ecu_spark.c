@@ -122,6 +122,14 @@ void scheduleCoils(uint32_t now)
     float pastFire = angDelta(deg, fire, cycle);
     float until = cycle - pastFire; /* degrees to next fire */
     uint8_t atFire = (pastFire < band);
+    /* Tooth hit: current slot is the fire tooth (works when loop rate is low) */
+    {
+      uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
+      uint16_t ft = (uint16_t)(fire * (float)teeth / cycle + 0.5f);
+      if (ft >= teeth) ft = 0;
+      if (toothIndex == ft || toothIndex == (uint16_t)((ft + 1u) % teeth))
+        atFire = 1;
+    }
 
 #if !CFG_COIL_SMART
     float dwellStart = wrapAngle(fire - dwellDeg, cycle);
@@ -132,7 +140,8 @@ void scheduleCoils(uint32_t now)
 
 #if CFG_COIL_SMART
     /* Charge before TDC; spark at fire. Never start after TDC. */
-    if (!coilFired[i] && armed && !coilState[i] && until <= dwellDeg && until > band) {
+    if (!coilFired[i] && armed && !coilState[i] &&
+        ((until <= dwellDeg && until > band) || atFire)) {
       ECU_IGN_HI(i);
       coilState[i] = 1;
       coilStartUs[i] = now;

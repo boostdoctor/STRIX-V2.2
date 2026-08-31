@@ -27,7 +27,8 @@ void ecuInjGpioInit(void)
   g.Mode  = GPIO_MODE_OUTPUT_PP;
   g.Pull  = GPIO_NOPULL;
   g.Speed = GPIO_SPEED_FREQ_HIGH;
-  g.Pin   = INJ1_Pin | INJ2_Pin | INJ3_Pin | INJ4_Pin;
+  g.Pin   = IGN1_Pin | IGN2_Pin | IGN3_Pin | IGN4_Pin
+          | INJ1_Pin | INJ2_Pin | INJ3_Pin | INJ4_Pin;
 #if defined(INJ5_Pin)
   g.Pin  |= INJ5_Pin | INJ6_Pin;
 #endif
@@ -314,8 +315,8 @@ void ECU_Loop(void) {
     pw = 0; /* deceleration fuel cut */
   injPwUs = (uint16_t)pw;
 
-  /* RPM hold: if no tooth for 200 ms, force RPM to 0 (stops slow coast-up) */
-  if (lastToothUs != 0 && (micros() - lastToothUs) > 500000UL) {
+  /* RPM hold: 1 s with no accepted edge */
+  if (lastToothUs != 0 && (micros() - lastToothUs) > 1000000UL) {
     if (rpmLive != 0) {
       rpmLive = 0;
       kf_rpm = 0.0f;

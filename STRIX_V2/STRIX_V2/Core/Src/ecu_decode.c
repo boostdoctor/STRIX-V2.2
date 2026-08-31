@@ -855,7 +855,7 @@ void ECU_CrankCapture(uint32_t capt)
   lastCapt = capt;
 
   /* Hard reject bounce / stalled overflow — no rollback games */
-  if (dt < 80UL || dt > 800000UL)
+  if (dt < 40UL || dt > 800000UL)
     return;
 
   lastToothUs = now;
@@ -868,17 +868,10 @@ void ECU_CrankCapture(uint32_t capt)
   if (phys < 2) phys = 2;
 
   uint8_t isGap = 0;
-  if (miss >= 1 && prevToothDt >= 80UL) {
-    /* Q8 ratio = 256 * dt / prev */
+  if (miss >= 1 && prevToothDt >= 40UL) {
     uint32_t rq = (dt << 8) / prevToothDt;
-    uint8_t expectGap = 0;
-    if (syncLocked)
-      expectGap = ECU_Trigger_ExpectGapAfter((uint8_t)teethSinceGap);
-    if (expectGap || !syncLocked) {
-      if (rq >= sh->gap_lo_q8 && rq <= sh->gap_hi_q8)
-        isGap = 1;
-    }
-    /* Locked but not at gap slot: ignore gap-like noise */
+    if (rq >= sh->gap_lo_q8 && rq <= sh->gap_hi_q8)
+      isGap = 1; /* ratio wins even if tooth count slipped */
   }
 
   if (isGap) {
@@ -901,7 +894,7 @@ void ECU_CrankCapture(uint32_t capt)
       if (rev >= 3000UL && rev <= 2000000UL) {
         uint32_t z = 60000000UL / rev;
         if (z > 15000UL) z = 15000UL;
-        if (z >= 30UL)
+        if (z >= 20UL)
           rpmLive = (uint16_t)z;
       }
     }
@@ -935,26 +928,28 @@ void ECU_CrankCapture(uint32_t capt)
     }
     camSeenThisRev = 0;
     decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
+    scheduleCoils(now);
     return;
   }
 
-  /* Normal tooth */
-  prevToothDt = dt;
-  toothPeriodUs = dt;
-  if (toothPeriodFilt)
-    toothPeriodFilt = (toothPeriodFilt * 3UL + dt) / 4UL;
-  else
-    toothPeriodFilt = dt;
+  /* Normal tooth — skip period update on long outliers (false gaps) */
+  {
+    uint32_t rq = (prevToothDt >= 40UL) ? ((dt << 8) / prevToothDt) : 256UL;
+    if (rq <= 400UL) { /* <= ~1.56x — real tooth */
+      prevToothDt = dt;
+      toothPeriodUs = dt;
+      if (toothPeriodFilt)
+        toothPeriodFilt = (toothPeriodFilt * 3UL + dt) / 4UL;
+      else
+        toothPeriodFilt = dt;
+    }
+  }
 
-  if (nom >= 2 && toothPeriodFilt >= 80UL) {
+  if (nom >= 2 && toothPeriodFilt >= 40UL) {
     uint32_t z = 60000000UL / (toothPeriodFilt * (uint32_t)nom);
     if (z > 15000UL) z = 15000UL;
-    if (z >= 30UL) {
-      if (rpmLive < 30)
-        rpmLive = (uint16_t)z;
-      else
-        rpmLive = (uint16_t)((rpmLive * 3u + (uint16_t)z) / 4u);
-    }
+    if (z >= 20UL)
+      rpmLive = (uint16_t)z; /* snap to period — no 3/4 hang */
   }
 
   if (toothIndex < 65000)
@@ -987,6 +982,7 @@ void ECU_CrankCapture(uint32_t capt)
   }
 
   decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
+  scheduleCoils(now);
 }
 
 /* ── Maps ───────────────────────────────────────────────────── */
