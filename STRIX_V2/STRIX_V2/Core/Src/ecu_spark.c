@@ -52,7 +52,7 @@ void scheduleCoils(uint32_t now)
   else if (rpmLive + (gRpmCutMode ? 150 : 200) < gRpmLimit)
     rpmCutActive = 0;
 
-  if (!syncLocked || rpmLive < 30 || toothPeriodUs < 40) {
+  if (!syncLocked || toothPeriodUs < 40) {
     for (uint8_t i = 1; i <= gCyl && i <= MAX_CYL; i++) {
       ECU_IGN_LO(i);
       coilState[i] = 0;
@@ -113,9 +113,12 @@ void scheduleCoils(uint32_t now)
     float tdc = seq ? tdcDeg(i) : wastedTdc(i);
     float fire = wrapAngle(tdc + trig - adv, cycle);
 
-    /* Re-arm only on a new gap — never inside the same fire window. */
-    static uint16_t coilStamp[MAX_CYL + 1];
-    if (coilStamp[i] != crankRevId && !coilState[i])
+    static uint32_t lastCoilFireUs[MAX_CYL + 1];
+    uint32_t revUs = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+    revUs *= (uint32_t)((gTeeth > 1) ? gTeeth : 36);
+    if (revUs < 3000u) revUs = 3000u;
+    uint8_t armed = ((now - lastCoilFireUs[i]) >= (revUs * 6u / 10u));
+    if (armed && !coilState[i])
       coilFired[i] = 0;
 
 #if !CFG_COIL_SMART
@@ -136,12 +139,12 @@ void scheduleCoils(uint32_t now)
     }
 
 #if CFG_COIL_SMART
-    if (!coilFired[i] && coilStamp[i] != crankRevId && atFire) {
+    if (!coilFired[i] && armed && atFire) {
       if (!coilState[i]) {
         ECU_IGN_HI(i);
         coilState[i] = 1;
         coilStartUs[i] = now;
-        coilStamp[i] = crankRevId;
+        lastCoilFireUs[i] = now;
       }
     }
     if (coilState[i] && (now - coilStartUs[i]) >= (uint32_t)CFG_DWELL_NOM_US) {
@@ -151,11 +154,11 @@ void scheduleCoils(uint32_t now)
       coilFired[i] = 1;
     }
 #else
-    if (!coilFired[i] && coilStamp[i] != crankRevId && !coilState[i] && inDwell) {
+    if (!coilFired[i] && armed && !coilState[i] && inDwell) {
       ECU_IGN_HI(i);
       coilState[i] = 1;
       coilStartUs[i] = now;
-      coilStamp[i] = crankRevId;
+      lastCoilFireUs[i] = now;
     }
     if (coilState[i] && !coilFired[i]) {
       uint8_t timeUp = (now - coilStartUs[i]) >= dwellTargetUs;

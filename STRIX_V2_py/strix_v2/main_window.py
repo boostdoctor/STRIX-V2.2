@@ -77,7 +77,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("STRIX V2")
-        self.resize(1280, 800)
+        self.setMinimumSize(900, 560)
+        self.resize(1280, 720)
         self.setStyleSheet(DARK_STYLE)
 
         self.engine = default_engine_settings()
@@ -100,9 +101,10 @@ class MainWindow(QMainWindow):
         self._auto_tried = False
 
         self.worker = SerialWorker()
-        self.worker.line_received.connect(self._on_line)
-        self.worker.connected_changed.connect(self._on_conn)
-        self.worker.status.connect(self._on_status)
+        # RX lives on a raw threading.Thread (not QThread). Force queued
+        # slots so QTimer.singleShot never runs off the GUI thread.
+        self.worker.connected_changed.connect(self._on_conn, Qt.QueuedConnection)
+        self.worker.status.connect(self._on_status, Qt.QueuedConnection)
         self._tx_timer = QTimer(self)
         self._tx_timer.setInterval(25)
         self._tx_timer.timeout.connect(self._drain_tx)
@@ -375,7 +377,7 @@ class MainWindow(QMainWindow):
 
         self._ui_timer = QTimer(self)
         self._ui_timer.timeout.connect(self._refresh_ui)
-        self._ui_timer.start(50)
+        self._ui_timer.start(33)
 
         QShortcut(QKeySequence("F1"), self, activated=self._show_help_overlay)
         QShortcut(QKeySequence("Ctrl+S"), self, activated=self._start_flash)
@@ -691,6 +693,9 @@ class MainWindow(QMainWindow):
         return float(self.live.get("map") or 0)
 
     def _refresh_ui(self):
+        if self.connected:
+            for line in self.worker.drain(100):
+                self._on_line(line)
         self.strip.update_live(
             self.live,
             map_kpa_max=self.engine.get("map_kpa_max") or 240,

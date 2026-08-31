@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import Callable, Optional
+from collections import deque
 
 import serial
 import serial.tools.list_ports
@@ -37,6 +38,7 @@ class SerialWorker(QObject):
         self._rx_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._rxq: deque = deque(maxlen=300)
 
     @property
     def is_open(self) -> bool:
@@ -95,6 +97,12 @@ class SerialWorker(QObject):
                 self.ser = None
         self.connected_changed.emit(False)
 
+    def drain(self, max_n: int = 80) -> list[str]:
+        out: list[str] = []
+        while self._rxq and len(out) < max_n:
+            out.append(self._rxq.popleft())
+        return out
+
     def send(self, text: str) -> bool:
         if not self.is_open:
             return False
@@ -145,7 +153,7 @@ class SerialWorker(QObject):
                     except Exception:
                         continue
                     if line:
-                        self.line_received.emit(line)
+                        self._rxq.append(line)
                 if len(buf) > 8192:
                     del buf[:-4096]
             except Exception as e:

@@ -74,7 +74,7 @@ void serviceInjection(void) {
       for (uint8_t i = 1; i <= n; i++) {
         if (injOn[i])
           continue;
-        if (injStamp[i] == crankRevId)
+        if (crankRevId != 0 && injStamp[i] == crankRevId)
           continue; /* already fired this gap */
         if (injDisableMask & (1u << (i - 1)))
           continue;
@@ -138,7 +138,7 @@ void serviceInjection(void) {
     /* One pulse per missing-tooth gap. Do not re-arm mid-window. */
     (void)injReq[i];
     injReq[i] = 0;
-    if (injStamp[i] == crankRevId)
+    if (crankRevId != 0 && injStamp[i] == crankRevId)
       continue;
 
     if (!injOn[i] && !injFiredCyc[i]) {
