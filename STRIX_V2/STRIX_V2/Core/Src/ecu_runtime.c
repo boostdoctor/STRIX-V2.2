@@ -119,6 +119,7 @@ float    gFlexIgnDegPer10 = 0.8f;
 /* Crank / cam */
 volatile uint32_t lastToothUs = 0, lastGapUs = 0;
 volatile uint16_t toothIndex = 0;
+volatile uint16_t crankRevId = 0;
 volatile uint8_t  syncLocked = 0, camSynced = 0, cam2Synced = 0;
 float  cam1PhaseDeg = 0.0f;
 float  cam2PhaseDeg = 0.0f;

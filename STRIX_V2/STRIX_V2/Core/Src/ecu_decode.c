@@ -908,6 +908,7 @@ void ECU_CrankCapture(uint32_t capt)
     lastGapUs = now;
     toothIndex = 0;
     teethSinceGap = 0;
+    crankRevId++;
 
     if (camSeenThisRev) {
       camUnlockMiss = 0;

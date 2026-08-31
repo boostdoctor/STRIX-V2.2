@@ -47,7 +47,6 @@ void serviceInjection(void) {
     }
   }
 
-  /* Allow cranking fire as soon as the wheel is locked — RPM may read <30. */
   if (!syncLocked || toothPeriodUs < 40) {
     for (uint8_t i = 1; i <= MAX_CYL; i++) {
       if (!injOn[i]) {
@@ -58,26 +57,32 @@ void serviceInjection(void) {
     return;
   }
 
-  /* Cranking: one 3 ms batch pulse per rev at the gap (tooth 0/1). */
-  if (rpmLive < 200) {
+  /* Hysteresis so we don't batch-fire and angle-fire on the same rev. */
+  static uint8_t crankingInj;
+  if (rpmLive < 180)
+    crankingInj = 1;
+  else if (rpmLive > 240)
+    crankingInj = 0;
+
+  static uint16_t injStamp[MAX_CYL + 1];
+
+  if (crankingInj) {
     uint8_t n = gCyl;
     if (n > MAX_CYL) n = MAX_CYL;
     if (n < 1) n = 1;
-    uint8_t atGap = (toothIndex <= 1);
-    if (atGap) {
+    if (toothIndex <= 1) {
       for (uint8_t i = 1; i <= n; i++) {
-        if (injOn[i] || injFiredCyc[i])
+        if (injOn[i])
           continue;
+        if (injStamp[i] == crankRevId)
+          continue; /* already fired this gap */
         if (injDisableMask & (1u << (i - 1)))
           continue;
         ECU_INJ_HI(i);
         injOn[i] = 1;
+        injFiredCyc[i] = 1;
+        injStamp[i] = crankRevId;
         injEndUs[i] = now + pw;
-      }
-    } else {
-      for (uint8_t i = 1; i <= n; i++) {
-        if (!injOn[i] && injFiredCyc[i] && toothIndex > 2)
-          injFiredCyc[i] = 0;
       }
     }
     return;
@@ -130,15 +135,11 @@ void serviceInjection(void) {
     if (pwDeg < 1.0f) pwDeg = 1.0f;
     float soi = wrapAngle(eoi - pwDeg, cycle);
 
-    if (injFiredCyc[i] && !injOn[i]) {
-      float past = wrapAngle(deg - eoi, cycle);
-      if (past > (cycle * 0.25f) && past < (cycle * 0.95f))
-        injFiredCyc[i] = 0;
-    }
-
-    /* Angle-only start: one pulse per cycle. injReq is ignored to stop double-fire. */
+    /* One pulse per missing-tooth gap. Do not re-arm mid-window. */
     (void)injReq[i];
     injReq[i] = 0;
+    if (injStamp[i] == crankRevId)
+      continue;
 
     if (!injOn[i] && !injFiredCyc[i]) {
       float cap = band * 1.5f;
@@ -166,6 +167,8 @@ void serviceInjection(void) {
         if (pwc > 20000) pwc = 20000;
         ECU_INJ_HI(i);
         injOn[i] = 1;
+        injFiredCyc[i] = 1;
+        injStamp[i] = crankRevId;
         injEndUs[i] = now + pwc;
       }
     }

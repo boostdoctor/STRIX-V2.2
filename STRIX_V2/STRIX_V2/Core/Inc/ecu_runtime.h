@@ -120,6 +120,7 @@ extern float gMapKpaMax; /* ADC 4095 = sensor max kPa */
 /* Sync / RPM */
 extern volatile uint32_t lastToothUs, lastGapUs, toothPeriodUs, toothPeriodFilt;
 extern volatile uint16_t toothIndex, syncLosses, toothErrors, rpmLive;
+extern volatile uint16_t crankRevId; /* ++ on accepted missing-tooth gap */
 extern volatile uint8_t  syncLocked, camSynced, cam2Synced;
 extern volatile float    crankDeg;
 extern volatile uint8_t  cycleHalf;

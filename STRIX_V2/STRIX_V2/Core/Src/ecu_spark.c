@@ -113,12 +113,10 @@ void scheduleCoils(uint32_t now)
     float tdc = seq ? tdcDeg(i) : wastedTdc(i);
     float fire = wrapAngle(tdc + trig - adv, cycle);
 
-    /* Re-arm after leaving the fire tooth (works on 360 and 720). */
-    if (coilFired[i] && !coilState[i]) {
-      float past = angDelta(deg, fire, cycle);
-      if (past > 20.0f && past < (cycle - 8.0f))
-        coilFired[i] = 0;
-    }
+    /* Re-arm only on a new gap — never inside the same fire window. */
+    static uint16_t coilStamp[MAX_CYL + 1];
+    if (coilStamp[i] != crankRevId && !coilState[i])
+      coilFired[i] = 0;
 
 #if !CFG_COIL_SMART
     float dwellStart = wrapAngle(fire - dwellDeg, cycle);
@@ -138,11 +136,12 @@ void scheduleCoils(uint32_t now)
     }
 
 #if CFG_COIL_SMART
-    if (!coilFired[i] && atFire) {
+    if (!coilFired[i] && coilStamp[i] != crankRevId && atFire) {
       if (!coilState[i]) {
         ECU_IGN_HI(i);
         coilState[i] = 1;
         coilStartUs[i] = now;
+        coilStamp[i] = crankRevId;
       }
     }
     if (coilState[i] && (now - coilStartUs[i]) >= (uint32_t)CFG_DWELL_NOM_US) {
@@ -152,10 +151,11 @@ void scheduleCoils(uint32_t now)
       coilFired[i] = 1;
     }
 #else
-    if (!coilFired[i] && !coilState[i] && inDwell) {
+    if (!coilFired[i] && coilStamp[i] != crankRevId && !coilState[i] && inDwell) {
       ECU_IGN_HI(i);
       coilState[i] = 1;
       coilStartUs[i] = now;
+      coilStamp[i] = crankRevId;
     }
     if (coilState[i] && !coilFired[i]) {
       uint8_t timeUp = (now - coilStartUs[i]) >= dwellTargetUs;

@@ -315,14 +315,14 @@ void ECU_Loop(void) {
   injPwUs = (uint16_t)pw;
 
   /* RPM hold: if no tooth for 200 ms, force RPM to 0 (stops slow coast-up) */
-  if (lastToothUs != 0 && (micros() - lastToothUs) > 200000UL) {
+  if (lastToothUs != 0 && (micros() - lastToothUs) > 500000UL) {
     if (rpmLive != 0) {
       rpmLive = 0;
       kf_rpm = 0.0f;
       kf_acc = 0.0f;
     }
   }
-  if (lastToothUs != 0 && (micros() - lastToothUs) > 800000UL) {
+  if (lastToothUs != 0 && (micros() - lastToothUs) > 2000000UL) {
     /* 0.5 s without accepted tooth = stalled / unlock */
     if (syncLocked) syncLosses++;
     syncLocked = 0;
