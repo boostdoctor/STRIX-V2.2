@@ -874,10 +874,26 @@ void ECU_CrankCapture(uint32_t capt)
   lastCapt = capt;
 
   /* Hard reject bounce / stalled overflow — no rollback games */
-  if (dt < 120UL || dt > 800000UL)
+  if (dt < 80UL || dt > 800000UL)
     return;
 
   lastToothUs = now;
+
+  /* Wall-clock tooth period — independent of TIM tick unit. */
+  {
+    static uint32_t prevEdgeUs;
+    if (prevEdgeUs != 0) {
+      uint32_t du = now - prevEdgeUs;
+      if (du >= 80UL && du <= 200000UL) {
+        toothPeriodUs = du;
+        if (toothPeriodFilt)
+          toothPeriodFilt = (toothPeriodFilt * 3UL + du) / 4UL;
+        else
+          toothPeriodFilt = du;
+      }
+    }
+    prevEdgeUs = now;
+  }
 
   const EcuTriggerShape *sh = ECU_Trigger_Shape();
   uint8_t miss = sh->missing;

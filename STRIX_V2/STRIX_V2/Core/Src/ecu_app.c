@@ -241,6 +241,7 @@ void ECU_Init(void) {
 /* ---- lines 3981-4109 ---- */
 void ECU_Loop(void) {
   ECU_Watchdog_Kick();
+  ECU_CrankPoll();
   ECU_Serial_Service();
   ECU_Persist_Service();
   servicePendingSave(); /* flash SAVE queued by serial / auto-persist */

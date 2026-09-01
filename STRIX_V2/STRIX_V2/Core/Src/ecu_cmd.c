@@ -37,13 +37,17 @@ void sendTelemetry(void) {
   /* Guarantee RPM field tracks period even if loop stalled Kalman at 0 */
   {
     uint16_t rpm_tx = rpmLive;
-    if (rpm_tx < 40 && toothPeriodUs >= 150 && gTeeth >= 2) {
+    if (toothPeriodFilt >= 80 && gTeeth >= 2) {
+      float z = 60000000.0f / ((float)toothPeriodFilt * (float)gTeeth);
+      if (z >= 20.0f && z <= 12000.0f)
+        rpm_tx = (uint16_t)(z + 0.5f);
+    } else if (toothPeriodUs >= 80 && gTeeth >= 2) {
       float z = 60000000.0f / ((float)toothPeriodUs * (float)gTeeth);
       if (z >= 20.0f && z <= 12000.0f)
         rpm_tx = (uint16_t)(z + 0.5f);
     }
     if (rpm_tx > 12000)
-      rpm_tx = rpmLive;
+      rpm_tx = 0;
     rpmLive = rpm_tx;
   }
 

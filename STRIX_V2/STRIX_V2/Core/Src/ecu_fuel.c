@@ -47,7 +47,9 @@ void serviceInjection(void) {
     }
   }
 
-  if (!syncLocked || toothPeriodUs < 40) {
+  /* Spinning = a tooth in the last 300 ms. Do not wait for gap-lock. */
+  uint8_t spinning = (lastToothUs != 0 && (now - lastToothUs) < 300000UL);
+  if (!spinning) {
     for (uint8_t i = 1; i <= MAX_CYL; i++) {
       if (!injOn[i]) {
         ECU_INJ_LO(i);
@@ -57,11 +59,10 @@ void serviceInjection(void) {
     return;
   }
 
-  /* Hysteresis so we don't batch-fire and angle-fire on the same rev. */
-  static uint8_t crankingInj;
-  if (rpmLive < 180)
+  static uint8_t crankingInj = 1;
+  if (rpmLive < 180 || !syncLocked)
     crankingInj = 1;
-  else if (rpmLive > 240)
+  else if (rpmLive > 240 && syncLocked)
     crankingInj = 0;
 
   static uint16_t injStamp[MAX_CYL + 1];
@@ -70,12 +71,18 @@ void serviceInjection(void) {
     uint8_t n = gCyl;
     if (n > MAX_CYL) n = MAX_CYL;
     if (n < 1) n = 1;
-    if (toothIndex <= 1) {
+    {
+      uint8_t phys = (gTeeth > gMissing) ? (uint8_t)(gTeeth - gMissing) : 36;
+      if (phys < 2) phys = 36;
+      uint8_t atRev = (toothIndex <= 1) ||
+                      (teethSinceGap > 0 && (teethSinceGap % phys) == 0);
+      static uint32_t lastBatchUs;
+      /* one batch per event — not every main-loop pass on the same tooth */
+      if (atRev && (now - lastBatchUs) > 25000UL) {
+      lastBatchUs = now;
       for (uint8_t i = 1; i <= n; i++) {
         if (injOn[i])
           continue;
-        if (crankRevId != 0 && injStamp[i] == crankRevId)
-          continue; /* already fired this gap */
         if (injDisableMask & (1u << (i - 1)))
           continue;
         ECU_INJ_HI(i);
@@ -83,6 +90,7 @@ void serviceInjection(void) {
         injFiredCyc[i] = 1;
         injStamp[i] = crankRevId;
         injEndUs[i] = now + pw;
+      }
       }
     }
     return;
