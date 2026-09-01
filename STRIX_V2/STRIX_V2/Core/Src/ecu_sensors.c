@@ -45,6 +45,8 @@ float adcToPctCal(uint16_t adc, uint16_t closed, uint16_t open)
 }
 
 void readSensors(void) {
+  if (hadc1.Instance == NULL)
+    return;
   /*
    * With timer-triggered DMA (ECU_Adc_Init), all ranks are fresh every scan.
    * When DMA is down, readAdc() polls — keep light RR for CPU only.

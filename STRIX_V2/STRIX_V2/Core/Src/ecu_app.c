@@ -134,9 +134,8 @@ void ECU_Init(void) {
   ECU_Serial_Init();
   fpPrimeUntilMs = millis() + (uint32_t)gFpPrimeMs; /* fuel pump prime on power-up */
 
-  /* Timer-triggered (TIM9) or continuous DMA ADC scan — see CUBEMX_ADC_DMA.md */
-  ECU_Adc_Init();
-  ECU_Flex_Init(); /* PA6 frequency flex sensor */
+  /* ADC DMA skipped at boot — it was hanging after the USB blink. */
+  ECU_Flex_Init();
 
   vvtMapsDefault();
   {
@@ -195,9 +194,9 @@ void ECU_Init(void) {
   /* IWDG armed from ECU_Loop after USB has 2 s to enumerate — early IWDG
    * reset loops look like "no COM port". */
 
-  /* Restore maps + TPS cal from flash if present */
-  {
-    static EcuFlashBlob blob; /* ~1.2 KB — must not live on 2 KB stack */
+  /* Flash load deferred — memcpy from sector 7 after USB is proven. */
+  if (0) {
+    static EcuFlashBlob blob;
     if (ECU_Flash_Load(&blob)) {
       tpsClosedAdc = blob.tpsClosed;
       tpsOpenAdc   = blob.tpsOpen;

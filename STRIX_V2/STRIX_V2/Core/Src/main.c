@@ -133,15 +133,12 @@ int main(void)
     {
       static uint8_t stage;
       uint32_t ms = HAL_GetTick();
-      /* Stage 0: USB only. Blink 200 ms — proves we reached main(). */
-      if (stage == 0u && ms > 1500u) {
-        MX_DMA_Init();
-        MX_ADC1_Init();
-        MX_TIM1_Init();
+      /* ADC/DMA skipped — HAL_ADC_Init Error_Handler froze the core
+       * (4 blinks then dark). TIM5/2 + lite ECU after USB is up. */
+      if (stage == 0u && ms > 2500u) {
+        MX_TIM5_Init();
         MX_TIM2_Init();
         MX_TIM3_Init();
-        MX_TIM4_Init();
-        MX_TIM5_Init();
         MX_CRC_Init();
         ECU_Init();
         stage = 1u;
@@ -151,7 +148,7 @@ int main(void)
     }
     {
       static uint32_t last_blink;
-      uint32_t per = (HAL_GetTick() < 1500u) ? 200U : 500U;
+      uint32_t per = (HAL_GetTick() < 2500u) ? 200U : 400U;
       if ((HAL_GetTick() - last_blink) >= per) {
         last_blink = HAL_GetTick();
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
@@ -733,7 +730,7 @@ void Error_Handler(void)
   while (1)
   {
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-    HAL_Delay(200); /* Error_Handler = 2.5 Hz, visible, not a solid LED */
+    for (volatile uint32_t i = 0; i < 800000u; i++) { }
   }
   /* USER CODE END Error_Handler_Debug */
 }
