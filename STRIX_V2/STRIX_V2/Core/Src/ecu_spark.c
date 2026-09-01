@@ -132,7 +132,7 @@ void scheduleCoils(uint32_t now)
     }
 
 #if !CFG_COIL_SMART
-    float dwellStart = wrapAngle(fire - dwellDeg, cycle);
+    float dwellStart __attribute__((unused)) = wrapAngle(fire - dwellDeg, cycle);
     uint8_t inDwell = angleActive(deg, dwellStart, fire, cycle);
     if (!inDwell && until <= dwellDeg && until > 0.5f)
       inDwell = 1;

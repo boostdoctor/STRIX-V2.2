@@ -19,6 +19,7 @@
 
 void ECU_Flex_Init(void);
 void ECU_SanitizeMapBins(void);
+void ECU_Trigger_Rebuild(uint8_t teeth, uint8_t missing, uint8_t cam, uint8_t id);
 
 /* ---- lines 325-397 ---- */
 

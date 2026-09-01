@@ -68,6 +68,7 @@ uint32_t micros(void);
 uint16_t readAdc(uint32_t ch); /* ecu_adc.c — DMA or poll */
 void ECU_Adc_Init(void);
 void ECU_SanitizeMapBins(void);
+void ECU_Trigger_Rebuild(uint8_t teeth, uint8_t missing, uint8_t cam, uint8_t id);
 void ECU_Adc_Stop(void);
 
 void rpmKalmanReset(void); /* period median+IIR reset (name kept for link compat) */
