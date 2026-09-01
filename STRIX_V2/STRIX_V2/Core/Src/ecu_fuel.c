@@ -61,12 +61,36 @@ void serviceInjection(void) {
 
   static uint16_t injStamp[MAX_CYL + 1];
 
+  /* Cranking / no-angle path: fire by tooth index so a scope always
+   * sees PB15/5/6/7. Pairs 1+4 at tooth 0, 2+3 at half-wheel. */
   {
-    uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
     uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
-    float usPerRev = (float)T * (float)teeth;
-    if (usPerRev < 2000.0f) return;
+    uint8_t half = (uint8_t)(teeth / 2u);
+    uint8_t bank14 = (toothIndex == 0u || toothIndex == 1u);
+    uint8_t bank23 = (toothIndex == half || toothIndex == (uint8_t)(half + 1u));
+    if (bank14 || bank23) {
+      uint8_t a = bank14 ? 1u : 2u;
+      uint8_t b = bank14 ? 4u : 3u;
+      uint16_t pwc = (pw < 2000) ? 3000 : pw;
+      if (pwc > 20000) pwc = 20000;
+      for (uint8_t k = 0; k < 2; k++) {
+        uint8_t i = (k == 0) ? a : b;
+        if (i > MAX_CYL) continue;
+        if (injOn[i]) continue;
+        if (injDisableMask & (1u << (i - 1))) continue;
+        if (injStamp[i] == crankRevId && crankRevId != 0)
+          continue;
+        ECU_INJ_HI(i);
+        injOn[i] = 1;
+        injFiredCyc[i] = 1;
+        injStamp[i] = crankRevId;
+        injEndUs[i] = now + pwc;
+      }
+    }
+    if (rpmLive < 800 || !syncLocked)
+      return; /* stay on tooth-index schedule until running */
   }
+
   float usPerRev = (float)(toothPeriodFilt ? toothPeriodFilt : toothPeriodUs) *
                    (float)((gTeeth > 1) ? gTeeth : 36);
   if (usPerRev < 2000.0f) return;

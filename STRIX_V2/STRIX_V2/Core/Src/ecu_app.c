@@ -50,8 +50,10 @@ void allOutputsOff(void) {
   ECU_FAN_LO();
   ECU_FP_LO();
   vvt1Duty = vvt2Duty = 0;
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+  if (htim1.Instance != NULL) {
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+  }
 }
 
 /* 4-cyl firing orders (gFireOrder 0..2). 6-cyl even-fire 1-5-3-6-2-4. */
@@ -240,6 +242,10 @@ void ECU_Init(void) {
 
 /* ---- lines 3981-4109 ---- */
 void ECU_Loop(void) {
+  {
+    static uint8_t pins_ok;
+    if (!pins_ok) { ecuInjGpioInit(); pins_ok = 1; }
+  }
   {
     uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
     uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
