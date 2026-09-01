@@ -193,9 +193,8 @@ void ECU_Init(void) {
   /* CRITICAL: arm crank/cam input-capture IRQs (PA0 TIM5, PA15 TIM2, PB4 TIM3) */
   ECU_CrankCam_Start();
 
-  /* IWDG ~1 s — must be kicked from ECU_Loop / flash */
-  ECU_Watchdog_Init();
-  ECU_Watchdog_Kick();
+  /* IWDG armed from ECU_Loop after USB has 2 s to enumerate — early IWDG
+   * reset loops look like "no COM port". */
 
   /* Restore maps + TPS cal from flash if present */
   {
@@ -243,7 +242,11 @@ void ECU_Init(void) {
 
 /* ---- lines 3981-4109 ---- */
 void ECU_Loop(void) {
-  ECU_Watchdog_Kick();
+  if (HAL_GetTick() > 2000u) {
+    static uint8_t wdg = 0;
+    if (!wdg) { ECU_Watchdog_Init(); wdg = 1; }
+    ECU_Watchdog_Kick();
+  }
   ECU_CrankPoll();
   ECU_Serial_Service();
   ECU_Persist_Service();

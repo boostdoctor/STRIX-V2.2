@@ -113,8 +113,23 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM5_Init();
   MX_CRC_Init();
-  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
+  /* Black Pill: pull DP low so the host drops a stale COM, then enum CDC */
+  {
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    GPIO_InitTypeDef ug = {0};
+    ug.Pin = GPIO_PIN_12;
+    ug.Mode = GPIO_MODE_OUTPUT_PP;
+    ug.Pull = GPIO_NOPULL;
+    ug.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOA, &ug);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+    HAL_Delay(80);
+  }
+  /* USER CODE END 2 */
+  MX_USB_DEVICE_Init();
+  /* USER CODE BEGIN 3_INIT */
+  HAL_Delay(50);
   ECU_Init();
   /* USER CODE END 2 */
 
@@ -166,7 +181,14 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
-    Error_Handler();
+    /* No 25 MHz HSE — keep USB alive on HSI: 16/16*192/2 = 96 MHz, Q=4 → 48 */
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSEState = RCC_HSE_OFF;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+    RCC_OscInitStruct.PLL.PLLM = 16;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+      Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
@@ -182,6 +204,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+  /* F411 USB FS clock = PLLQ (192/4=48 MHz). No CLK48 mux on this silicon. */
 }
 
 /**

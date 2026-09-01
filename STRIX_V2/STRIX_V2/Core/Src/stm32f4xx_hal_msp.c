@@ -241,7 +241,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
     HAL_GPIO_Init(CAM1_TIM2_CH1_GPIO_Port, &GPIO_InitStruct);
 
     /* TIM2 interrupt Init */
-    HAL_NVIC_SetPriority(TIM2_IRQn, 1, 0);
+    HAL_NVIC_SetPriority(TIM2_IRQn, 6, 0);
     HAL_NVIC_EnableIRQ(TIM2_IRQn);
     /* USER CODE BEGIN TIM2_MspInit 1 */
 
@@ -304,7 +304,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
     HAL_GPIO_Init(CRANK_TIM5_CH1_GPIO_Port, &GPIO_InitStruct);
 
     /* TIM5 interrupt Init — highest priority so USB/ADC cannot steal crank edges */
-    HAL_NVIC_SetPriority(TIM5_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(TIM5_IRQn, 6, 0); /* below USB OTG=5 so CDC enumerates */
     HAL_NVIC_EnableIRQ(TIM5_IRQn);
     /* USER CODE BEGIN TIM5_MspInit 1 */
 
