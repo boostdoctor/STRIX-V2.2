@@ -17,6 +17,9 @@
 #include <math.h>
 #include <stdint.h>
 
+void ECU_Flex_Init(void);
+void ECU_SanitizeMapBins(void);
+
 /* ---- lines 325-397 ---- */
 
 void ecuInjGpioInit(void)

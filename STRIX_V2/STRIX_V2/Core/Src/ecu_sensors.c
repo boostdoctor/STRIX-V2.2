@@ -15,6 +15,10 @@
 #include <math.h>
 #include <stdint.h>
 
+/* Compile even if Cube tree has a stale ecu_runtime.h */
+extern float gMapKpaMin;
+extern float gMapKpaMax;
+
 /* ---- lines 2545-2633 ---- */
 float ntcBetaC(uint16_t adc) {
   if (adc < 1) adc = 1;
