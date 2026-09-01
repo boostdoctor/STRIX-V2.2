@@ -65,10 +65,7 @@ class SerialWorker(QObject):
                     rtscts=False,
                     dsrdtr=False,
                 )
-                try:
-                    self.ser = serial.Serial(**kwargs, exclusive=False)
-                except TypeError:
-                    self.ser = serial.Serial(**kwargs)
+                self.ser = serial.Serial(**kwargs)
                 try:
                     self.ser.reset_input_buffer()
                     self.ser.reset_output_buffer()
