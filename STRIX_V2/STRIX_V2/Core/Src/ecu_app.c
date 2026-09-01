@@ -18,7 +18,6 @@
 #include <stdint.h>
 
 /* ---- lines 325-397 ---- */
-float gVePct = 0.0f;
 
 void ecuInjGpioInit(void)
 {
@@ -300,6 +299,18 @@ void ECU_Loop(void) {
   }
   if (launchDecayActive && launchDecayFuelPct > 0.1f) {
     pw *= (1.0f + launchDecayFuelPct * 0.01f);
+  }
+  /* Injector deadtime: extra open-time so commanded fuel actually flows.
+   * Calibrated at 13.2 V; scales ~1/Vbat (slower pintle at low battery). */
+  if (!dfcoActive && !floodClearActive && pw > 0.0f) {
+    float dt = gInjDeadMs;
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > 3.0f) dt = 3.0f;
+    float vb = engBat;
+    if (vb < 8.0f) vb = 8.0f;
+    if (vb > 16.0f) vb = 16.0f;
+    dt *= 13.2f / vb;
+    pw += dt * 1000.0f;
   }
   /* Cranking (<200 RPM): fixed 3.0 ms prime pulse. Else floor 1.0 ms. */
   if (rpmLive > 0 && rpmLive < 200 && !dfcoActive && !floodClearActive)

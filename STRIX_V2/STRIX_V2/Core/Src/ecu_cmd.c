@@ -199,6 +199,12 @@ void ECU_Settings_Pack(EcuFlashSettings *out)
     out->mapKpaMin = mn;
     out->mapKpaMax = mx;
   }
+  {
+    int d = (int)(gInjDeadMs * 20.0f + 0.5f); /* 0.05 ms units */
+    if (d < 0) d = 0;
+    if (d > 60) d = 60;
+    out->reserved[2] = (uint8_t)d;
+  }
 }
 
 void ECU_Settings_Apply(const EcuFlashSettings *in)
@@ -271,6 +277,8 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
     }
     mapCalReady = 0;
   }
+  if (in->reserved[2] > 0 && in->reserved[2] <= 60)
+    gInjDeadMs = (float)in->reserved[2] * 0.05f;
   ECU_Idle_SetEnable(idleEnable);
   ECU_Idle_SetTargetRpm((uint16_t)idleTargetRpm);
 }
@@ -1010,7 +1018,7 @@ if (!strncmp(line, "SAVE", 4)) {
     char b[240];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u\r\n",
+             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
@@ -1018,7 +1026,8 @@ if (!strncmp(line, "SAVE", 4)) {
              (unsigned)(boostEnable ? (bstOpenLoop ? 2u : 1u) : 0u),
              (double)gEoiBtdc,
              (double)gMapKpaMin, (double)gMapKpaMax,
-             (unsigned)gRpmLimit, (unsigned)gRpmCutMode);
+             (unsigned)gRpmLimit, (unsigned)gRpmCutMode,
+             (double)gInjDeadMs);
     uartWrite(b);
     return;
   }
@@ -1160,8 +1169,19 @@ if (!strncmp(line, "SAVE", 4)) {
     {
       char b[40];
       snprintf(b, sizeof b, "OK:RPMLIM,%u,%u\r\n",
-               (unsigned)gRpmLimit, (unsigned)gRpmCutMode);
+               (unsigned)gRpmLimit, (unsigned)gRpmCutMode,
+             (double)gInjDeadMs);
       uartWrite(b);
+    }
+    return;
+  }
+
+  if (!strncmp(line, "SET:DEADTIME,", 13)) {
+    float ms = 0.8f;
+    if (sscanf(line + 13, "%f", &ms) >= 1) {
+      if (ms < 0.0f) ms = 0.0f;
+      if (ms > 3.0f) ms = 3.0f;
+      gInjDeadMs = ms;
     }
     return;
   }

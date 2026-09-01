@@ -264,6 +264,7 @@ extern float gInjFlowCcMin, gReqFuelMs;
 extern int8_t gMaxAdvDeg;   /* max advance BTDC */
 extern int8_t gMaxRetDeg;   /* max retard magnitude (ATDC) */
 extern float gMaxInjMs;     /* max injection pulse ms */
+extern float gInjDeadMs;    /* injector deadtime ms @ 13.2V */
 extern float gFuelPressureBar;       /* actual rail bar */
 extern float gFuelPressureRatedBar;  /* rated flow pressure bar */
 extern uint8_t  aeEnable;

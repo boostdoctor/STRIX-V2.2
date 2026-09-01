@@ -584,6 +584,17 @@ class EngineSettingsDialog(QDialog):
         self.max_inj.setValue(float(settings.get("max_inj_ms") or 15.0))
         self.max_inj.setToolTip("Hard maximum injector pulse width (after enrichments)")
         inj_form.addRow("Max injection", self.max_inj)
+        self.inj_dead = QDoubleSpinBox()
+        self.inj_dead.setMinimumWidth(140)
+        self.inj_dead.setRange(0.0, 3.0)
+        self.inj_dead.setDecimals(2)
+        self.inj_dead.setSingleStep(0.05)
+        self.inj_dead.setSuffix(" ms")
+        self.inj_dead.setValue(float(settings.get("inj_dead_ms") or 0.80))
+        self.inj_dead.setToolTip(
+            "Injector deadtime at 13.2 V (pintle open delay).\n"
+            "Added to every pulse. Scales as 13.2/Vbat at other voltages.")
+        inj_form.addRow("Injector deadtime", self.inj_dead)
 
         def _fuel_mode_fields(mode: str):
             ve_on = (mode == "VE")
@@ -1104,6 +1115,8 @@ class EngineSettingsDialog(QDialog):
             settings["req_fuel_ms"] = float(self.req_fuel.value())
             if hasattr(self, "max_inj"):
                 settings["max_inj_ms"] = float(self.max_inj.value())
+            if hasattr(self, "inj_dead"):
+                settings["inj_dead_ms"] = float(self.inj_dead.value())
             if hasattr(self, "fuel_press"):
                 settings["fuel_pressure_bar"] = float(self.fuel_press.value())
                 settings["fuel_pressure_rated_bar"] = float(self.fuel_press_rated.value())

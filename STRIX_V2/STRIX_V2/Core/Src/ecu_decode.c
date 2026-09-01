@@ -959,7 +959,6 @@ void ECU_CrankCapture(uint32_t capt)
     }
     camSeenThisRev = 0;
     decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
-    scheduleCoils(now);
     return;
   }
 
@@ -1008,7 +1007,6 @@ void ECU_CrankCapture(uint32_t capt)
   }
 
   decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
-  scheduleCoils(now);
 }
 
 /* ── Maps ───────────────────────────────────────────────────── */

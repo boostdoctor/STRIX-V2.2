@@ -47,6 +47,7 @@ char gDeviceUid[16] = "STRIXV2";
 uint8_t mapCellR = 0, mapCellC = 0; /* last lookup cell */
 int8_t  baseAdvDeg = 0;   /* map only, pre-retard */
 float   baseInjMs  = 0;   /* map only, pre-trim */
+float   gVePct = 0.0f;
 uint8_t sensorPhase = 0;
 
 
@@ -463,6 +464,7 @@ const float vvtLoadBins[VVT_MAP_N] = {
 int8_t gMaxAdvDeg = 40;
 int8_t gMaxRetDeg = 10;
 float gMaxInjMs = 15.0f;
+float gInjDeadMs = 0.80f; /* injector deadtime at 13.2 V */
 
 
 static float _bilerp5(const float map[IDLE_MAP_N][IDLE_MAP_N],

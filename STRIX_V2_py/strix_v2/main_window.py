@@ -873,6 +873,11 @@ class MainWindow(QMainWindow):
             self._apply_fuel_mode_heatmap(fill_suggested=False)
         if "REQFUEL" in parts:
             self.engine["req_fuel_ms"] = float(parts["REQFUEL"])
+        if "DEAD" in parts:
+            try:
+                self.engine["inj_dead_ms"] = float(parts["DEAD"])
+            except Exception:
+                pass
         if "FLOW" in parts:
             self.engine["inj_flow_cc"] = float(parts["FLOW"])
         if "RPMLIM" in parts:
@@ -1211,6 +1216,7 @@ class MainWindow(QMainWindow):
                     int(self.engine.get("max_retard") or 10),
                 ))
                 self._tx("SET:INJMAX,%.1f\n" % float(self.engine.get("max_inj_ms") or 15.0))
+                self._tx("SET:DEADTIME,%.2f\n" % float(self.engine.get("inj_dead_ms") or 0.80))
                 self._tx("SET:DFCO,%d,%d,%d,%.1f,%.0f,%d\n" % (
                     1 if self.engine.get("dfco_enable", True) else 0,
                     int(self.engine.get("dfco_enter_rpm") or 1600),
