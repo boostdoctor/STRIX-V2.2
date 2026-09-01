@@ -46,42 +46,52 @@ class SerialWorker(QObject):
 
     def connect_port(self, port: str) -> tuple[bool, str]:
         self.disconnect()
-        try:
-            # Windows COM10+ needs \\.\ prefix
-            dev = port
-            if port.upper().startswith("COM"):
+        time.sleep(0.35)  # let Windows release the previous handle
+        dev = port
+        if port.upper().startswith("COM"):
+            dev = "\\\\.\\" + port.upper()
+        last_err = "open failed"
+        for attempt in range(4):
+            try:
+                kwargs = dict(
+                    port=dev,
+                    baudrate=self.baud,
+                    timeout=0.05,
+                    write_timeout=1.0,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    xonxoff=False,
+                    rtscts=False,
+                    dsrdtr=False,
+                )
                 try:
-                    n = int(port[3:])
-                    if n >= 10:
-                        dev = r"\\.\\" + port
-                except ValueError:
+                    self.ser = serial.Serial(**kwargs, exclusive=False)
+                except TypeError:
+                    self.ser = serial.Serial(**kwargs)
+                try:
+                    self.ser.reset_input_buffer()
+                    self.ser.reset_output_buffer()
+                except Exception:
                     pass
-            # Do not toggle DTR/RTS — STM32 CDC resets the MCU on DTR.
-            self.ser = serial.Serial(
-                dev, self.baud, timeout=0.05, write_timeout=0.4,
-                dsrdtr=False, rtscts=False,
-            )
-            try:
-                self.ser.dtr = False
-                self.ser.rts = False
-            except Exception:
-                pass
-            try:
-                self.ser.reset_input_buffer()
-                self.ser.reset_output_buffer()
-            except Exception:
-                pass
-            time.sleep(0.25)
-            self._stop.clear()
-            self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
-            self._rx_thread.start()
-            self.connected_changed.emit(True)
-            self.status.emit(f"Connected {port} @ {self.baud}")
-            return True, "ok"
-        except Exception as e:
-            self.ser = None
-            self.connected_changed.emit(False)
-            return False, str(e)
+                time.sleep(0.15)
+                self._stop.clear()
+                self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
+                self._rx_thread.start()
+                self.connected_changed.emit(True)
+                self.status.emit(f"Connected {port} @ {self.baud}")
+                return True, "ok"
+            except Exception as e:
+                last_err = str(e)
+                try:
+                    if self.ser:
+                        self.ser.close()
+                except Exception:
+                    pass
+                self.ser = None
+                time.sleep(0.4 * (attempt + 1))
+        self.connected_changed.emit(False)
+        return False, last_err
 
     def disconnect(self) -> None:
         self._stop.set()

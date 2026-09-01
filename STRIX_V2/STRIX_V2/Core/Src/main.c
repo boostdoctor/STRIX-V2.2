@@ -180,22 +180,27 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  /* HSI 16 MHz × 192 / 16 / 2 = 96 MHz, PLLQ/4 = 48 MHz USB.
-   * Do not use HSE here — 8 MHz vs 25 MHz crystals both "succeed" OscConfig
-   * and then USB is not 48 MHz (no COM port). */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSEState = RCC_HSE_OFF;
+  /* WeAct F411 Black Pill = 25 MHz HSE.
+   * USB FS needs 48 MHz ±0.25 %. HSI is ±1 % and fails Windows CDC
+   * (timing / Access denied). 25/25*192/2 = 96 MHz, Q=4 → 48 MHz. */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 16;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 25;
   RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
-    Error_Handler();
+    /* Crystal missing — last-resort HSI (USB may be flaky) */
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSEState = RCC_HSE_OFF;
+    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+    RCC_OscInitStruct.PLL.PLLM = 16;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+      Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
