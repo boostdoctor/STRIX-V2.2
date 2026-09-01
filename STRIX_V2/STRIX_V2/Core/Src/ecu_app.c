@@ -240,6 +240,15 @@ void ECU_Init(void) {
 
 /* ---- lines 3981-4109 ---- */
 void ECU_Loop(void) {
+  {
+    uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+    uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
+    if (T >= 80u && teeth >= 2) {
+      uint32_t z = 60000000UL / (T * (uint32_t)teeth);
+      if (z >= 20u && z <= 12000u)
+        rpmLive = (uint16_t)z;
+    }
+  }
   ECU_CrankPoll();
   ECU_Serial_Service();
   ECU_Persist_Service();

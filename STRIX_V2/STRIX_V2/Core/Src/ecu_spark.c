@@ -76,8 +76,10 @@ void scheduleCoils(uint32_t now)
     return;
   }
 
-  float usPerRev = (float)toothPeriodUs * (float)gTeeth;
-  if (usPerRev < 400.0f)
+  uint32_t Trev = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+  uint8_t teethRev = (gTeeth > 1) ? gTeeth : 36;
+  float usPerRev = (float)Trev * (float)teethRev;
+  if (usPerRev < 2000.0f)
     return;
   float degPerUs = 360.0f / usPerRev;
   float dwellDeg = (float)dwellTargetUs * degPerUs;
