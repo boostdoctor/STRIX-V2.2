@@ -38,7 +38,7 @@ _estack = ORIGIN(RAM) + LENGTH(RAM);
 
 /* Minimum sizes checked at link time via ._user_heap_stack */
 _Min_Heap_Size  = 0x400;   /* 1 KB heap  */
-_Min_Stack_Size = 0x800;   /* 2 KB stack */
+_Min_Stack_Size = 0x2000;  /* 8 KB stack */
 
 /* -------------------------------------------------------------------------- */
 MEMORY

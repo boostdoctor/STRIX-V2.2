@@ -122,18 +122,7 @@ int main(void)
   }
   /* USER CODE END 2 */
   MX_USB_DEVICE_Init();
-  MX_DMA_Init();
-  MX_ADC1_Init();
-  MX_TIM1_Init();
-  MX_TIM2_Init();
-  MX_TIM3_Init();
-  MX_TIM4_Init();
-  MX_TIM5_Init();
-  MX_CRC_Init();
   /* USER CODE BEGIN 3_INIT */
-  ECU_Init();
-  /* USER CODE END 2 */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -141,11 +130,29 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    ECU_Loop();
-    /* PC13 slow blink = main alive */
+    {
+      static uint8_t stage;
+      uint32_t ms = HAL_GetTick();
+      /* Stage 0: USB only. Blink 200 ms — proves we reached main(). */
+      if (stage == 0u && ms > 1500u) {
+        MX_DMA_Init();
+        MX_ADC1_Init();
+        MX_TIM1_Init();
+        MX_TIM2_Init();
+        MX_TIM3_Init();
+        MX_TIM4_Init();
+        MX_TIM5_Init();
+        MX_CRC_Init();
+        ECU_Init();
+        stage = 1u;
+      }
+      if (stage)
+        ECU_Loop();
+    }
     {
       static uint32_t last_blink;
-      if ((HAL_GetTick() - last_blink) >= 500U) {
+      uint32_t per = (HAL_GetTick() < 1500u) ? 200U : 500U;
+      if ((HAL_GetTick() - last_blink) >= per) {
         last_blink = HAL_GetTick();
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
       }
@@ -172,28 +179,21 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  /* WeAct F411 Black Pill = 25 MHz HSE.
-   * USB FS needs 48 MHz ±0.25 %. HSI is ±1 % and fails Windows CDC
-   * (timing / Access denied). 25/25*192/2 = 96 MHz, Q=4 → 48 MHz. */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  /* HSI 16 /16 *192 /2 = 96 MHz, PLLQ/4 = 48 MHz USB.
+   * Crystal is NOT used. A 8 MHz vs 25 MHz HSE both "lock" the PLL
+   * and then GET_DESCRIPTOR fails. HSI is the only crystal-safe USB clock. */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSEState = RCC_HSE_OFF;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 25;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 16;
   RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    /* Crystal missing — last-resort HSI (USB may be flaky) */
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-    RCC_OscInitStruct.HSEState = RCC_HSE_OFF;
-    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-    RCC_OscInitStruct.PLL.PLLM = 16;
-    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-      Error_Handler();
-  }
+    Error_Handler();
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
@@ -733,7 +733,7 @@ void Error_Handler(void)
   while (1)
   {
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-    for (volatile uint32_t i = 0; i < 200000u; i++) { }
+    HAL_Delay(200); /* Error_Handler = 2.5 Hz, visible, not a solid LED */
   }
   /* USER CODE END Error_Handler_Debug */
 }
