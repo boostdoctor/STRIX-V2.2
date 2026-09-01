@@ -86,7 +86,14 @@ void MX_USB_DEVICE_Init(void)
   }
 
   /* USER CODE BEGIN USB_DEVICE_Init_PostTreatment */
-
+  /* F411 Black Pill: no VBUS pin. Force session-valid + PHY powered. */
+  USB_OTG_FS->GCCFG |= USB_OTG_GCCFG_NOVBUSSENS | USB_OTG_GCCFG_PWRDWN;
+  USB_OTG_FS->GCCFG &= ~(USB_OTG_GCCFG_VBUSBSEN | USB_OTG_GCCFG_VBUSASEN);
+  {
+    USB_OTG_DeviceTypeDef *dev =
+      (USB_OTG_DeviceTypeDef *)((uint32_t)USB_OTG_FS + USB_OTG_DEVICE_BASE);
+    dev->DCTL &= ~USB_OTG_DCTL_SDIS;
+  }
   /* USER CODE END USB_DEVICE_Init_PostTreatment */
 }
 

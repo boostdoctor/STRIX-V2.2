@@ -190,8 +190,12 @@ void ECU_Init(void) {
   ecuInjGpioInit(); /* reclaim PB4 from JTAG NJTRST */
   allOutputsOff();
 
-  /* CRITICAL: arm crank/cam input-capture IRQs (PA0 TIM5, PA15 TIM2, PB4 TIM3) */
-  ECU_CrankCam_Start();
+  /* Crank IRQs after USB is live — TIM5 prio used to starve CDC on a floating PA0 */
+  {
+    extern USBD_HandleTypeDef hUsbDeviceFS;
+    if (hUsbDeviceFS.dev_state == 3U)
+      ECU_CrankCam_Start();
+  }
 
   /* IWDG armed from ECU_Loop after USB has 2 s to enumerate — early IWDG
    * reset loops look like "no COM port". */
@@ -242,7 +246,15 @@ void ECU_Init(void) {
 
 /* ---- lines 3981-4109 ---- */
 void ECU_Loop(void) {
-  if (HAL_GetTick() > 2000u) {
+  {
+    extern USBD_HandleTypeDef hUsbDeviceFS;
+    static uint8_t crank_armed;
+    if (!crank_armed && (HAL_GetTick() > 2500u || hUsbDeviceFS.dev_state == 3U)) {
+      ECU_CrankCam_Start();
+      crank_armed = 1;
+    }
+  }
+  if (HAL_GetTick() > 8000u) {
     static uint8_t wdg = 0;
     if (!wdg) { ECU_Watchdog_Init(); wdg = 1; }
     ECU_Watchdog_Kick();

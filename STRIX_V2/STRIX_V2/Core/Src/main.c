@@ -119,6 +119,17 @@ int main(void)
   }
   /* USER CODE END 2 */
   MX_USB_DEVICE_Init();
+  /* Give the host ~2 s to enumerate CDC before any ECU IRQ/ADC work */
+  {
+    extern USBD_HandleTypeDef hUsbDeviceFS;
+    uint32_t t0 = HAL_GetTick();
+    while ((HAL_GetTick() - t0) < 2000u) {
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+      HAL_Delay(80);
+      if (hUsbDeviceFS.dev_state == 3U) /* USBD_STATE_CONFIGURED */
+        break;
+    }
+  }
   MX_DMA_Init();
   MX_ADC1_Init();
   MX_TIM1_Init();
@@ -128,7 +139,6 @@ int main(void)
   MX_TIM5_Init();
   MX_CRC_Init();
   /* USER CODE BEGIN 3_INIT */
-  HAL_Delay(200);
   ECU_Init();
   /* USER CODE END 2 */
 
