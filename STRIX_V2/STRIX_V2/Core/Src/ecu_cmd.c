@@ -50,6 +50,14 @@ void sendTelemetry(void) {
       rpm_tx = 0;
     rpmLive = rpm_tx;
   }
+  {
+    char r[48];
+    snprintf(r, sizeof r, "RPM:%u,TOOTH:%u,SYNC:%u\r\n",
+             (unsigned)rpmLive,
+             (unsigned)toothIndex,
+             (unsigned)syncLocked);
+    uartWrite(r);
+  }
 
   int n = snprintf(b, sizeof b,
     "RPM:%u,PW:%.2f,INJ:%.2f,IGN:%d,TRET:%.1f,MAP:%.0f,TPS:%.0f,TMP:%.0f,IAT:%.0f,BAT:%.1f,VSS:%.1f,"

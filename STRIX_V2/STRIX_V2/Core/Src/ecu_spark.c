@@ -151,13 +151,17 @@ void scheduleCoils(uint32_t now)
 
 #if CFG_COIL_SMART
     /* Charge before TDC; spark at fire. Never start after TDC. */
+    /* dwellDeg at cranking is often < band, so "until > band" never started
+     * the coil; atFire then charged and dumped in the same pass (no pulse). */
     if (!coilFired[i] && armed && !coilState[i] &&
-        ((until <= dwellDeg && until > band) || atFire)) {
+        (until <= dwellDeg || atFire || until < 40.0f)) {
       ECU_IGN_HI(i);
       coilState[i] = 1;
       coilStartUs[i] = now;
     }
-    if (coilState[i] && (atFire || (now - coilStartUs[i]) >= (uint32_t)CFG_DWELL_NOM_US)) {
+    if (coilState[i] &&
+        ((now - coilStartUs[i]) >= (uint32_t)CFG_DWELL_NOM_US ||
+         (atFire && (now - coilStartUs[i]) >= 800u))) {
       ECU_IGN_LO(i);
       dwellActualUs = (uint16_t)(now - coilStartUs[i]);
       coilState[i] = 0;

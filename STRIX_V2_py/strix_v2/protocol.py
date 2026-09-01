@@ -6,6 +6,7 @@ from typing import Any
 
 KEY_MAP = {
     "RPM": "rpm",
+    "TOOTH": "tooth",
     "MAP": "map",
     "TPS": "tps", "TADC": "tadc",
     "TMP": "ect",
@@ -53,6 +54,7 @@ KEY_MAP = {
 def default_live() -> dict[str, Any]:
     return {
         "rpm": 0,
+        "tooth": 0,
         "map": 0,
         "tps": 0, "tadc": 0.0,
         "ect": 0.0,

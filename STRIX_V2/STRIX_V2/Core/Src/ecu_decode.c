@@ -884,7 +884,7 @@ void ECU_CrankCapture(uint32_t capt)
     static uint32_t prevEdgeUs;
     if (prevEdgeUs != 0) {
       uint32_t du = now - prevEdgeUs;
-      if (du >= 80UL && du <= 200000UL) {
+      if (du >= 80UL && du <= 500000UL) {
         toothPeriodUs = du;
         if (toothPeriodFilt)
           toothPeriodFilt = (toothPeriodFilt * 3UL + du) / 4UL;
@@ -903,7 +903,7 @@ void ECU_CrankCapture(uint32_t capt)
   if (phys < 2) phys = 2;
 
   uint8_t isGap = 0;
-  if (miss >= 1 && prevToothDt >= 150UL && prevToothDt <= 20000UL) {
+  if (miss >= 1 && prevToothDt >= 150UL && prevToothDt <= 80000UL) {
     uint32_t rq = (dt << 8) / prevToothDt;
     if (rq >= sh->gap_lo_q8 && rq <= sh->gap_hi_q8)
       isGap = 1;
