@@ -1169,8 +1169,7 @@ if (!strncmp(line, "SAVE", 4)) {
     {
       char b[40];
       snprintf(b, sizeof b, "OK:RPMLIM,%u,%u\r\n",
-               (unsigned)gRpmLimit, (unsigned)gRpmCutMode,
-             (double)gInjDeadMs);
+               (unsigned)gRpmLimit, (unsigned)gRpmCutMode);
       uartWrite(b);
     }
     return;

@@ -24,6 +24,13 @@ static uint8_t hiwdg_valid(void)
 
 void ECU_Watchdog_Init(void)
 {
+  /* IWDG off until CDC is proven — reset loops look like a dead COM */
+  iwdg_on = 0;
+  return;
+  /* original follows if re-enabled */
+}
+void ECU_Watchdog_Init_DISABLED(void)
+{
   if (iwdg_on)
     return;
 

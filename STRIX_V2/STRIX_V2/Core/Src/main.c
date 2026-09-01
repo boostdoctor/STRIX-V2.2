@@ -105,16 +105,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();   /* must precede ADC DMA */
-  MX_ADC1_Init();
-  MX_TIM1_Init();
-  MX_TIM2_Init();
-  MX_TIM3_Init();
-  MX_TIM4_Init();
-  MX_TIM5_Init();
-  MX_CRC_Init();
   /* USER CODE BEGIN 2 */
-  /* Black Pill: pull DP low so the host drops a stale COM, then enum CDC */
   {
     __HAL_RCC_GPIOA_CLK_ENABLE();
     GPIO_InitTypeDef ug = {0};
@@ -124,12 +115,20 @@ int main(void)
     ug.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOA, &ug);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
-    HAL_Delay(80);
+    HAL_Delay(100);
   }
   /* USER CODE END 2 */
   MX_USB_DEVICE_Init();
+  MX_DMA_Init();
+  MX_ADC1_Init();
+  MX_TIM1_Init();
+  MX_TIM2_Init();
+  MX_TIM3_Init();
+  MX_TIM4_Init();
+  MX_TIM5_Init();
+  MX_CRC_Init();
   /* USER CODE BEGIN 3_INIT */
-  HAL_Delay(50);
+  HAL_Delay(200);
   ECU_Init();
   /* USER CODE END 2 */
 
@@ -171,24 +170,22 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  /* HSI 16 MHz × 192 / 16 / 2 = 96 MHz, PLLQ/4 = 48 MHz USB.
+   * Do not use HSE here — 8 MHz vs 25 MHz crystals both "succeed" OscConfig
+   * and then USB is not 48 MHz (no COM port). */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSEState = RCC_HSE_OFF;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 25;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 16;
   RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
-    /* No 25 MHz HSE — keep USB alive on HSI: 16/16*192/2 = 96 MHz, Q=4 → 48 */
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-    RCC_OscInitStruct.HSEState = RCC_HSE_OFF;
-    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-    RCC_OscInitStruct.PLL.PLLM = 16;
-    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-      Error_Handler();
+    Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
