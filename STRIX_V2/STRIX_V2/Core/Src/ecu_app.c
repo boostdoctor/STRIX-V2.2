@@ -190,14 +190,14 @@ void ECU_Init(void) {
   ecuInjGpioInit(); /* reclaim PB4 from JTAG NJTRST */
   allOutputsOff();
 
-  /* TIM5 crank IRQs armed from ECU_Loop after 2.5 s so CDC can enumerate. */
+  ECU_CrankCam_Start();
 
   /* IWDG armed from ECU_Loop after USB has 2 s to enumerate — early IWDG
    * reset loops look like "no COM port". */
 
   /* Restore maps + TPS cal from flash if present */
   {
-    EcuFlashBlob blob;
+    static EcuFlashBlob blob; /* ~1.2 KB — must not live on 2 KB stack */
     if (ECU_Flash_Load(&blob)) {
       tpsClosedAdc = blob.tpsClosed;
       tpsOpenAdc   = blob.tpsOpen;
@@ -241,18 +241,6 @@ void ECU_Init(void) {
 
 /* ---- lines 3981-4109 ---- */
 void ECU_Loop(void) {
-  {
-    static uint8_t crank_armed;
-    if (!crank_armed && HAL_GetTick() > 2500u) {
-      ECU_CrankCam_Start();
-      crank_armed = 1;
-    }
-  }
-  if (HAL_GetTick() > 8000u) {
-    static uint8_t wdg = 0;
-    if (!wdg) { ECU_Watchdog_Init(); wdg = 1; }
-    ECU_Watchdog_Kick();
-  }
   ECU_CrankPoll();
   ECU_Serial_Service();
   ECU_Persist_Service();

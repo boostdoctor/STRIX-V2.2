@@ -52,12 +52,21 @@ void scheduleCoils(uint32_t now)
   else if (rpmLive + (gRpmCutMode ? 150 : 200) < gRpmLimit)
     rpmCutActive = 0;
 
-  if (!syncLocked || toothPeriodUs < 40) {
-    for (uint8_t i = 1; i <= gCyl && i <= MAX_CYL; i++) {
-      ECU_IGN_LO(i);
-      coilState[i] = 0;
+  {
+    uint8_t spinning = (lastToothUs != 0 && (now - lastToothUs) < 250000UL);
+    if (!spinning || (toothPeriodUs < 40 && toothPeriodFilt < 40)) {
+      for (uint8_t i = 1; i <= gCyl && i <= MAX_CYL; i++) {
+        ECU_IGN_LO(i);
+        coilState[i] = 0;
+      }
+      return;
     }
-    return;
+    /* No gap-lock yet: still spark wasted from tooth index so a stim
+     * or a weak first-lock produces pulses. */
+    if (!syncLocked) {
+      uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
+      crankDeg = (float)toothIndex * (360.0f / (float)teeth);
+    }
   }
   if (rpmCutActive && gRpmCutMode == 0) {
     for (uint8_t i = 1; i <= gCyl && i <= MAX_CYL; i++) {
