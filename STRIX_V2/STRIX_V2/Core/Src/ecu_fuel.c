@@ -61,9 +61,8 @@ void serviceInjection(void) {
 
   static uint16_t injStamp[MAX_CYL + 1];
 
-  /* Cranking / no-angle path: fire by tooth index so a scope always
-   * sees PB15/5/6/7. Pairs 1+4 at tooth 0, 2+3 at half-wheel. */
-  {
+  /* Pair path only when sequential is OFF. Sequential uses 720° below. */
+  if (!injSequentialActive()) {
     uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
     uint8_t half = (uint8_t)(teeth / 2u);
     uint8_t bank14 = (toothIndex == 0u || toothIndex == 1u);
@@ -88,7 +87,7 @@ void serviceInjection(void) {
       }
     }
     if (rpmLive < 800 || !syncLocked)
-      return; /* stay on tooth-index schedule until running */
+      return;
   }
 
   float usPerRev = (float)(toothPeriodFilt ? toothPeriodFilt : toothPeriodUs) *
@@ -133,7 +132,7 @@ void serviceInjection(void) {
       continue;
 
     /* Same frame as spark: gap 0° + trigger = compression TDC. */
-    float trueTdc = wrapAngle(tdc + trig, cycle);
+    float trueTdc = wrapAngle(tdc, cycle); /* crankDeg already +trig */
     float eoi = wrapAngle(trueTdc - eoiOfs, cycle);
     float pwDeg = (float)pw * degPerUs;
     if (pwDeg < 1.0f) pwDeg = 1.0f;

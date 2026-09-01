@@ -1259,7 +1259,7 @@ class MainWindow(QMainWindow):
         cyl = int(eng.get("cylinders") or 4)
         cam_home = bool(eng.get("cam_home", True))
         coil = COIL_TYPE_TO_ECU.get(eng.get("coil_type") or "Smart", 0)
-        ign_seq = str(eng.get("ign_mode") or "").startswith("Seq") and cam_home and coil != 2
+        ign_seq = str(eng.get("ign_mode") or "").startswith("Seq") and cam_home
         inj_seq = str(eng.get("inj_mode") or "").startswith("Seq")
         if cyl in (5, 6, 8):
             inj_seq = False

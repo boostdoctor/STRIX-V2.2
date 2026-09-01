@@ -938,7 +938,7 @@ void ECU_CrankCapture(uint32_t capt)
       camUnlockMiss = 0;
       if (camLockHits < 255)
         camLockHits++;
-      if (camLockHits >= 3)
+      if (camLockHits >= 2)
         camSynced = 1;
     } else if (syncLocked) {
       if (camUnlockMiss < 255)
@@ -958,7 +958,7 @@ void ECU_CrankCapture(uint32_t capt)
       cycleHalf = 0;
     }
     camSeenThisRev = 0;
-    decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
+    decoderPublishAngle(camSynced && (gIgnMode == 1 || gInjMode >= 2));
     return;
   }
 
@@ -1006,7 +1006,7 @@ void ECU_CrankCapture(uint32_t capt)
     }
   }
 
-  decoderPublishAngle((ignSequentialActive() || injSequentialActive()) && camSynced);
+  decoderPublishAngle(camSynced && (gIgnMode == 1 || gInjMode >= 2));
 }
 
 /* ── Maps ───────────────────────────────────────────────────── */

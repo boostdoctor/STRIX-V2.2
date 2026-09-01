@@ -124,9 +124,14 @@ void scheduleCoils(uint32_t now)
 
     float tdc = seq ? tdcDeg(i) : wastedTdc(i);
     /* crankDeg already includes trigger offset from the decoder */
-    float fire = wrapAngle(tdc + trig - adv, cycle);
+    /* crankDeg already has gTrigAngle from decoderPublishAngle */
+    float fire = wrapAngle(tdc - adv, cycle);
+    (void)trig;
 
-    uint8_t armed = ((now - lastCoilFireUs[i]) >= (revUs / 2u));
+    /* Sequential: one spark / 720° per coil (>= 1.6 crank revs).
+     * Wasted: one spark / 360° (>= 0.45 crank rev). */
+    uint32_t minGap = ignSequentialActive() ? ((revUs * 8u) / 5u) : (revUs / 2u);
+    uint8_t armed = ((now - lastCoilFireUs[i]) >= minGap);
     if (armed && !coilState[i])
       coilFired[i] = 0;
 
