@@ -836,12 +836,14 @@ static void rpmAccept(uint32_t periodUs, uint8_t teeth)
 
 static void decoderPublishAngle(uint8_t use720)
 {
+  /* Wheel degrees from the gap. Trigger offset is applied at the coil,
+   * not here — adding it in both places slid sequential TDC by 2×trig. */
   uint16_t ax = ECU_Trigger_AngleX10((uint8_t)(toothIndex > 255 ? 255 : toothIndex));
-  float a = (float)ax * 0.1f + (float)gTrigAngle;
+  float a = (float)ax * 0.1f;
   if (use720 && cycleHalf)
     a += 360.0f;
   while (a >= 720.0f) a -= 720.0f;
-  while (a < 0.0f) a += 360.0f;
+  while (a < 0.0f) a += (use720 ? 720.0f : 360.0f);
   crankDeg = a;
 }
 
@@ -949,16 +951,14 @@ void ECU_CrankCapture(uint32_t capt)
       }
     }
 
-    if (gIgnMode == 1 || gInjMode >= 2) {
-      if (camSynced)
-        cycleHalf = camSeenThisRev ? 0u : 1u;
-      else
-        cycleHalf ^= 1u; /* free-run 720° until cam home */
-    } else {
+    /* 720° half only from a real cam pulse. XOR free-run is 360° out
+     * half the time and is what made sequential look "out of sync". */
+    if ((gIgnMode == 1 || gInjMode >= 2) && camSynced)
+      cycleHalf = camSeenThisRev ? 0u : 1u;
+    else if (!camSynced)
       cycleHalf = 0;
-    }
     camSeenThisRev = 0;
-    decoderPublishAngle((gIgnMode == 1) || (gInjMode >= 2));
+    decoderPublishAngle(camSynced && (gIgnMode == 1 || gInjMode >= 2));
     return;
   }
 
@@ -1006,7 +1006,7 @@ void ECU_CrankCapture(uint32_t capt)
     }
   }
 
-  decoderPublishAngle((gIgnMode == 1) || (gInjMode >= 2));
+  decoderPublishAngle(camSynced && (gIgnMode == 1 || gInjMode >= 2));
 }
 
 /* ── Maps ───────────────────────────────────────────────────── */

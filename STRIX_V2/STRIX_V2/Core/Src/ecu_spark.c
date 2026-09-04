@@ -86,7 +86,8 @@ void scheduleCoils(uint32_t now)
   if (dwellDeg > 80.0f) dwellDeg = 80.0f;
   if (dwellDeg < 2.0f) dwellDeg = 2.0f;
 
-  uint8_t seq = ignSequentialActive();
+  /* 720° only with cam lock — without it, wasted 360° keeps TDC correct. */
+  uint8_t seq = (ignSequentialActive() && camSynced) ? 1u : 0u;
   float cycle = seq ? 720.0f : 360.0f;
   float deg = crankDeg;
   float adv = (float)ignAdvanceDeg;
@@ -123,14 +124,12 @@ void scheduleCoils(uint32_t now)
     }
 
     float tdc = seq ? tdcDeg(i) : wastedTdc(i);
-    /* crankDeg already includes trigger offset from the decoder */
-    /* crankDeg already has gTrigAngle from decoderPublishAngle */
-    float fire = wrapAngle(tdc - adv, cycle);
-    (void)trig;
+    /* crankDeg is gap-relative. Cyl1 compression TDC = gTrigAngle. */
+    float fire = wrapAngle(tdc + trig - adv, cycle);
 
     /* Sequential: one spark / 720° per coil (>= 1.6 crank revs).
      * Wasted: one spark / 360° (>= 0.45 crank rev). */
-    uint32_t minGap = ignSequentialActive() ? ((revUs * 8u) / 5u) : (revUs / 2u);
+    uint32_t minGap = seq ? ((revUs * 8u) / 5u) : (revUs / 2u);
     uint8_t armed = ((now - lastCoilFireUs[i]) >= minGap);
     if (armed && !coilState[i])
       coilFired[i] = 0;
@@ -141,9 +140,14 @@ void scheduleCoils(uint32_t now)
     /* Tooth hit: current slot is the fire tooth (works when loop rate is low) */
     {
       uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
-      uint16_t ft = (uint16_t)(fire * (float)teeth / cycle + 0.5f);
-      if (ft >= teeth) ft = 0;
-      if (toothIndex == ft || toothIndex == (uint16_t)((ft + 1u) % teeth))
+      uint16_t nidx = seq ? (uint16_t)(teeth * 2u) : teeth;
+      uint16_t cur  = seq
+        ? (uint16_t)(toothIndex + (uint16_t)cycleHalf * (uint16_t)teeth)
+        : (uint16_t)toothIndex;
+      uint16_t ft = (uint16_t)(fire * (float)nidx / cycle + 0.5f);
+      if (nidx) ft %= nidx;
+      uint16_t ft1 = (uint16_t)((ft + 1u) % (nidx ? nidx : 1u));
+      if (cur == ft || cur == ft1)
         atFire = 1;
     }
 

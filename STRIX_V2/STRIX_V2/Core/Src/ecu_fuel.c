@@ -94,7 +94,7 @@ void serviceInjection(void) {
                    (float)((gTeeth > 1) ? gTeeth : 36);
   if (usPerRev < 2000.0f) return;
 
-  uint8_t seq = injSequentialActive();
+  uint8_t seq = (injSequentialActive() && camSynced) ? 1u : 0u;
   float cycle = seq ? 720.0f : 360.0f;
   float deg = crankDeg;
   float band = 360.0f / (float)((gTeeth > 0) ? gTeeth : 36);
