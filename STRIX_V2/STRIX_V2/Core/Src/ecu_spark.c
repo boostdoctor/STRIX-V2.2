@@ -37,6 +37,9 @@ static float wastedTdc(uint8_t cyl)
 
 void scheduleCoils(uint32_t now)
 {
+  static uint32_t lastCoilFireUs[MAX_CYL + 1];
+  static uint8_t  coilPulseN[MAX_CYL + 1]; /* 0=idle 1=gap 2=second */
+
   /* 20 ms hang at cranking — 8 ms was cutting dwell before TDC at low RPM */
   uint32_t hangUs = (rpmLive < 1200) ? 20000u : 8000u;
   for (uint8_t i = 1; i <= MAX_CYL; i++) {
@@ -44,7 +47,14 @@ void scheduleCoils(uint32_t now)
       ECU_IGN_LO(i);
       coilState[i] = 0;
       coilFired[i] = 1;
+      coilPulseN[i] = 0;
     }
+    /* Double-spark latch must not outlive the event — that killed all coils. */
+    if (!gSparkDouble)
+      coilPulseN[i] = 0;
+    else if (coilPulseN[i] && lastCoilFireUs[i] &&
+             (now - lastCoilFireUs[i]) > 8000u)
+      coilPulseN[i] = 0;
   }
 
   if (rpmLive >= gRpmLimit)
@@ -58,6 +68,7 @@ void scheduleCoils(uint32_t now)
       for (uint8_t i = 1; i <= gCyl && i <= MAX_CYL; i++) {
         ECU_IGN_LO(i);
         coilState[i] = 0;
+        coilPulseN[i] = 0;
       }
       return;
     }
@@ -72,6 +83,7 @@ void scheduleCoils(uint32_t now)
     for (uint8_t i = 1; i <= gCyl && i <= MAX_CYL; i++) {
       ECU_IGN_LO(i);
       coilState[i] = 0;
+      coilPulseN[i] = 0;
     }
     return;
   }
@@ -111,8 +123,6 @@ void scheduleCoils(uint32_t now)
   if (n > MAX_CYL) n = MAX_CYL;
   if (!seq && n > 4) n = 4;
 
-  static uint32_t lastCoilFireUs[MAX_CYL + 1];
-  static uint8_t  coilPulseN[MAX_CYL + 1];
   uint32_t revUs = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
   revUs *= (uint32_t)((gTeeth > 1) ? gTeeth : 36);
   if (revUs < 4000u) revUs = 4000u;
@@ -210,14 +220,20 @@ void scheduleCoils(uint32_t now)
       coilPulseN[i] = 0;
       lastCoilFireUs[i] = now;
     }
-    /* Multi-spark: ~500 µs off, then a shorter second charge. */
-    if (gSparkDouble && coilPulseN[i] == 1 && !coilState[i] &&
-        (now - lastCoilFireUs[i]) >= 500u) {
-      ECU_IGN_HI(i);
-      coilState[i] = 1;
-      coilStartUs[i] = now;
-      coilPulseN[i] = 2;
-      coilFired[i] = 0;
+    /* Second pulse: 400 µs gap, half dwell, only if a first spark just happened.
+     * Drop the latch if RPM is too high for two charges in one event. */
+    if (gSparkDouble && coilPulseN[i] == 1 && !coilState[i]) {
+      uint32_t gap = now - lastCoilFireUs[i];
+      if (rpmLive > 3500 || gap > 3000u) {
+        coilPulseN[i] = 0;
+        coilFired[i] = 1;
+      } else if (gap >= 400u) {
+        ECU_IGN_HI(i);
+        coilState[i] = 1;
+        coilStartUs[i] = now;
+        coilPulseN[i] = 2;
+        coilFired[i] = 0;
+      }
     }
   }
 
