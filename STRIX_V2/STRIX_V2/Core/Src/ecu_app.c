@@ -90,14 +90,12 @@ float tdcDeg(uint8_t cyl)
 /* Sequential ignition only with cam home. Else wasted spark. */
 uint8_t ignSequentialActive(void)
 {
-  return (gIgnMode == 1 && camSynced) ? 1u : 0u;
+  /* Mode bit from tuner. Cam only sets 720° phase, not whether seq is on. */
+  return (gIgnMode == 1) ? 1u : 0u;
 }
 
-/* Sequential injection only with cam home. Else batch. */
 uint8_t injSequentialActive(void)
 {
-  if (!camSynced)
-    return 0;
   if (gInjMode == 2)
     return 1u;
   if (gInjMode == 3)

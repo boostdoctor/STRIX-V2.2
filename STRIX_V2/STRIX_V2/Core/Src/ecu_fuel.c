@@ -138,13 +138,19 @@ void serviceInjection(void) {
     if (pwDeg < 1.0f) pwDeg = 1.0f;
     float soi = wrapAngle(eoi - pwDeg, cycle);
 
-    /* One pulse per missing-tooth gap. Do not re-arm mid-window. */
     (void)injReq[i];
     injReq[i] = 0;
-    if (crankRevId != 0 && injStamp[i] == crankRevId)
-      continue;
+    /* Sequential: one pulse per 720° (rev id + cycleHalf). Batch: one per gap. */
+    {
+      uint16_t stamp = seq
+        ? (uint16_t)((crankRevId << 1) | (cycleHalf & 1u))
+        : crankRevId;
+      if (stamp != 0 && injStamp[i] == stamp)
+        continue;
+      injFiredCyc[i] = 0;
+    }
 
-    if (!injOn[i] && !injFiredCyc[i]) {
+    if (!injOn[i]) {
       float cap = band * 1.5f;
       if (cap < 8.0f) cap = 8.0f;
       if (cap > 18.0f) cap = 18.0f;
@@ -170,8 +176,10 @@ void serviceInjection(void) {
         if (pwc > 20000) pwc = 20000;
         ECU_INJ_HI(i);
         injOn[i] = 1;
-        injFiredCyc[i] = 1;
-        injStamp[i] = crankRevId;
+        injFiredCyc[i] = 0;
+        injStamp[i] = seq
+          ? (uint16_t)((crankRevId << 1) | (cycleHalf & 1u))
+          : crankRevId;
         injEndUs[i] = now + pwc;
       }
     }

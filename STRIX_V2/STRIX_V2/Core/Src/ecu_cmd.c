@@ -897,7 +897,8 @@ if (!strncmp(line, "SAVE", 4)) {
     if (m > 3) m = 3;
     gInjMode = (uint8_t)m;
     if (gInjMode == 2)
-      gCamMode = 1; /* sequential needs cam home */
+      gCamMode = 1;
+    ECU_Persist_Touch();
     {
       char b[32];
       snprintf(b, sizeof b, "OK:INJMODE,%u\r\n", (unsigned)gInjMode);
@@ -912,6 +913,7 @@ if (!strncmp(line, "SAVE", 4)) {
     gIgnMode = (uint8_t)m;
     if (gIgnMode == 1)
       gCamMode = 1;
+    ECU_Persist_Touch();
     {
       char b[32];
       snprintf(b, sizeof b, "OK:IGNMODE,%u\r\n", (unsigned)gIgnMode);
@@ -1026,7 +1028,7 @@ if (!strncmp(line, "SAVE", 4)) {
     char b[240];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAM:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f\r\n",
+             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
