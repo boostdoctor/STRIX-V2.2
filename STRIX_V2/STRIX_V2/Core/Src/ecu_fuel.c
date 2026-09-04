@@ -37,6 +37,21 @@ void serviceInjection(void) {
   else if (pw < 1000)
     pw = 1000;
   if (pw > 20000) pw = 20000;
+  /* Duty cap — 15 ms PW at 3500–4000 RPM is longer than the 180° window
+   * (~7.5–8.5 ms) so the pin never drops. 80 % of event time. */
+  {
+    uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+    uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
+    uint8_t n = (gCyl >= 1 && gCyl <= MAX_CYL) ? gCyl : 4;
+    uint32_t rev = T * (uint32_t)teeth;
+    if (T >= 80u && rev > 2000u) {
+      uint32_t ev = (n >= 2) ? (rev * 2u / n) : rev; /* 4-cyl: 180° */
+      uint32_t maxpw = (ev * 80u) / 100u;
+      if (maxpw < 1000u) maxpw = 1000u;
+      if (maxpw > 20000u) maxpw = 20000u;
+      if (pw > maxpw) pw = (uint16_t)maxpw;
+    }
+  }
 
   for (uint8_t i = 1; i <= MAX_CYL; i++) {
     if (injOn[i] && (int32_t)(now - injEndUs[i]) >= 0) {
@@ -86,8 +101,9 @@ void serviceInjection(void) {
         injEndUs[i] = now + pwc;
       }
     }
-    if (rpmLive < 800 || !syncLocked)
-      return;
+    /* Batch stays on the tooth-index path. Falling through also ran the
+     * 360° SOI window and re-opened the same pin mid-pulse (sticky). */
+    return;
   }
 
   float usPerRev = (float)(toothPeriodFilt ? toothPeriodFilt : toothPeriodUs) *
