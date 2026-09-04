@@ -862,6 +862,13 @@ class MainWindow(QMainWindow):
             ct = int(float(parts["COILTYPE"]))
             if ct in COIL_TYPE_FROM_ECU:
                 self.engine["coil_type"] = COIL_TYPE_FROM_ECU[ct]
+        if "DWELL" in parts:
+            try:
+                self.engine["dwell_ms"] = float(parts["DWELL"])
+            except ValueError:
+                pass
+        if "SPKDBL" in parts:
+            self.engine["spark_double"] = bool(int(float(parts["SPKDBL"])))
         if "BATCHRPM" in parts:
             self.engine["batch_above_rpm"] = int(float(parts["BATCHRPM"]))
         if "VEMODE" in parts:
@@ -1282,6 +1289,8 @@ class MainWindow(QMainWindow):
             if str(eng.get("coil_charge_mode")) in ("0", "Constant duty", "Duty"):
                 cm = 0
             self._tx("SET:COILMODE,%d\n" % cm)
+        self._tx("SET:DWELL,%.1f\n" % float(eng.get("dwell_ms") or 3.0))
+        self._tx("SET:SPKDBL,%d\n" % (1 if eng.get("spark_double") else 0))
         self._tx("SET:IGNMODE,%d\n" % (1 if ign_seq else 0))
         self._tx("SET:INJMODE,%d\n" % (2 if inj_seq else 1))
         eoi = int(eng.get("eoi_btdc") or 340)

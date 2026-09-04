@@ -425,10 +425,19 @@ void ECU_Loop(void) {
   float v = engBat;
   if (v < 8) v = 8;
   if (v > 16) v = 16;
-  float dus = (float)CFG_DWELL_NOM_US * (14.0f / v);
-  if (dus < CFG_DWELL_MIN_US) dus = CFG_DWELL_MIN_US;
-  if (dus > CFG_DWELL_MAX_US) dus = CFG_DWELL_MAX_US;
-  dwellTargetUs = (uint16_t)dus;
+  {
+    float nom = (float)(gDwellNomUs ? gDwellNomUs : CFG_DWELL_NOM_US);
+    if (nom < 800.0f) nom = 800.0f;
+    if (nom > 8000.0f) nom = 8000.0f;
+    float dus = nom * (14.0f / v);
+    float dmin = nom * 0.50f;
+    float dmax = nom * 1.50f;
+    if (dmin < 800.0f) dmin = 800.0f;
+    if (dmax > 8000.0f) dmax = 8000.0f;
+    if (dus < dmin) dus = dmin;
+    if (dus > dmax) dus = dmax;
+    dwellTargetUs = (uint16_t)dus;
+  }
 
   serviceO2ClosedLoop();
   ECU_Features_Service();

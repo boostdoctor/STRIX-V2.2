@@ -958,6 +958,29 @@ if (!strncmp(line, "SAVE", 4)) {
     uartWrite("OK:COILMODE\r\n");
     return;
   }
+  if (!strncmp(line, "SET:DWELL,", 10)) {
+    float ms = strtof(line + 10, NULL);
+    if (ms < 0.8f) ms = 0.8f;
+    if (ms > 8.0f) ms = 8.0f;
+    gDwellNomUs = (uint16_t)(ms * 1000.0f + 0.5f);
+    ECU_Persist_Touch();
+    {
+      char b[32];
+      snprintf(b, sizeof b, "OK:DWELL,%.1f\r\n", (double)ms);
+      uartWrite(b);
+    }
+    return;
+  }
+  if (!strncmp(line, "SET:SPKDBL,", 11)) {
+    gSparkDouble = (uint8_t)(atoi(line + 11) ? 1 : 0);
+    ECU_Persist_Touch();
+    {
+      char b[24];
+      snprintf(b, sizeof b, "OK:SPKDBL,%u\r\n", (unsigned)gSparkDouble);
+      uartWrite(b);
+    }
+    return;
+  }
   if (!strncmp(line, "SET:FAN,", 8)) {
     int t = atoi(line + 8);
     if (t < 60) t = 60;
@@ -1025,10 +1048,10 @@ if (!strncmp(line, "SAVE", 4)) {
   }
 
   if (!strncmp(line, "GETCFG", 6)) {
-    char b[240];
+    char b[280];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f\r\n",
+             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f,DWELL:%.1f,SPKDBL:%u\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
@@ -1037,7 +1060,8 @@ if (!strncmp(line, "SAVE", 4)) {
              (double)gEoiBtdc,
              (double)gMapKpaMin, (double)gMapKpaMax,
              (unsigned)gRpmLimit, (unsigned)gRpmCutMode,
-             (double)gInjDeadMs);
+             (double)gInjDeadMs,
+             (double)(gDwellNomUs * 0.001f), (unsigned)gSparkDouble);
     uartWrite(b);
     return;
   }

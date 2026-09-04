@@ -112,6 +112,7 @@ void scheduleCoils(uint32_t now)
   if (!seq && n > 4) n = 4;
 
   static uint32_t lastCoilFireUs[MAX_CYL + 1];
+  static uint8_t  coilPulseN[MAX_CYL + 1];
   uint32_t revUs = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
   revUs *= (uint32_t)((gTeeth > 1) ? gTeeth : 36);
   if (revUs < 4000u) revUs = 4000u;
@@ -162,20 +163,31 @@ void scheduleCoils(uint32_t now)
     /* Charge before TDC; spark at fire. Never start after TDC. */
     /* dwellDeg at cranking is often < band, so "until > band" never started
      * the coil; atFire then charged and dumped in the same pass (no pulse). */
-    if (!coilFired[i] && armed && !coilState[i] &&
+    if (!coilFired[i] && armed && !coilState[i] && coilPulseN[i] == 0 &&
         (until <= dwellDeg || atFire || until < 40.0f)) {
       ECU_IGN_HI(i);
       coilState[i] = 1;
       coilStartUs[i] = now;
     }
-    if (coilState[i] &&
-        ((now - coilStartUs[i]) >= (uint32_t)CFG_DWELL_NOM_US ||
-         (atFire && (now - coilStartUs[i]) >= 800u))) {
-      ECU_IGN_LO(i);
-      dwellActualUs = (uint16_t)(now - coilStartUs[i]);
-      coilState[i] = 0;
-      coilFired[i] = 1;
-      lastCoilFireUs[i] = now;
+    {
+      uint32_t dneed = dwellTargetUs ? dwellTargetUs : (uint32_t)CFG_DWELL_NOM_US;
+      if (coilPulseN[i] == 2 && dneed > 1500u)
+        dneed = dneed / 2u;
+      if (coilState[i] &&
+          ((now - coilStartUs[i]) >= dneed ||
+           (atFire && (now - coilStartUs[i]) >= 800u))) {
+        ECU_IGN_LO(i);
+        dwellActualUs = (uint16_t)(now - coilStartUs[i]);
+        coilState[i] = 0;
+        lastCoilFireUs[i] = now;
+        if (gSparkDouble && coilPulseN[i] == 0) {
+          coilPulseN[i] = 1; /* wait gap, then second spark */
+          coilFired[i] = 0;
+        } else {
+          coilPulseN[i] = 0;
+          coilFired[i] = 1;
+        }
+      }
     }
 #else
     if (!coilFired[i] && armed && !coilState[i] && inDwell) {
@@ -191,11 +203,21 @@ void scheduleCoils(uint32_t now)
       lastCoilFireUs[i] = now;
     }
 #endif
-    if (coilState[i] && (now - coilStartUs[i]) > (uint32_t)CFG_DWELL_MAX_US + 500U) {
+    if (coilState[i] && (now - coilStartUs[i]) > (uint32_t)(dwellTargetUs ? dwellTargetUs : CFG_DWELL_MAX_US) + 1500U) {
       ECU_IGN_LO(i);
       coilState[i] = 0;
       coilFired[i] = 1;
+      coilPulseN[i] = 0;
       lastCoilFireUs[i] = now;
+    }
+    /* Multi-spark: ~500 µs off, then a shorter second charge. */
+    if (gSparkDouble && coilPulseN[i] == 1 && !coilState[i] &&
+        (now - lastCoilFireUs[i]) >= 500u) {
+      ECU_IGN_HI(i);
+      coilState[i] = 1;
+      coilStartUs[i] = now;
+      coilPulseN[i] = 2;
+      coilFired[i] = 0;
     }
   }
 

@@ -417,6 +417,18 @@ class EngineSettingsDialog(QDialog):
             "Constant Duty (smart default): <300 RPM 60%, >500 RPM max 40%. "
             "Constant Charge: fixed dwell time, max 8 ms.")
         form.addRow("Coil charge", self.coil_charge)
+        self.dwell_ms = QDoubleSpinBox()
+        self.dwell_ms.setRange(0.8, 8.0)
+        self.dwell_ms.setDecimals(1)
+        self.dwell_ms.setSingleStep(0.1)
+        self.dwell_ms.setSuffix(" ms")
+        self.dwell_ms.setValue(float(settings.get("dwell_ms") or 3.0))
+        self.dwell_ms.setToolTip("Coil charge time at 14 V. Scales with battery.")
+        form.addRow("Coil charge time", self.dwell_ms)
+        self.spk_double = QCheckBox("Double spark (2 pulses / event)")
+        self.spk_double.setChecked(bool(settings.get("spark_double")))
+        self.spk_double.setToolTip("Second shorter spark ~0.5 ms after the first.")
+        form.addRow(self.spk_double)
 
         def _on_coil_type():
             if self.coil.currentText() == "Smart":
@@ -1141,6 +1153,10 @@ class EngineSettingsDialog(QDialog):
         settings["coil_type"] = self.coil.currentText()
         if hasattr(self, "coil_charge"):
             settings["coil_charge_mode"] = self.coil_charge.currentText()
+        if hasattr(self, "dwell_ms"):
+            settings["dwell_ms"] = float(self.dwell_ms.value())
+        if hasattr(self, "spk_double"):
+            settings["spark_double"] = bool(self.spk_double.isChecked())
         settings["firing_order"] = self.fire.currentText()
         if hasattr(self, "idle_cl_en"):
             settings["idle_enable"] = bool(self.idle_cl_en.isChecked())
