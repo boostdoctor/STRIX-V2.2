@@ -39,6 +39,7 @@ void scheduleCoils(uint32_t now)
 {
   static uint32_t lastCoilFireUs[MAX_CYL + 1];
   static uint8_t  coilPulseN[MAX_CYL + 1]; /* 0=idle 1=gap 2=second */
+  static float    coilDblDeg[MAX_CYL + 1];
 
   /* 20 ms hang at cranking — 8 ms was cutting dwell before TDC at low RPM */
   uint32_t hangUs = (rpmLive < 1200) ? 20000u : 8000u;
@@ -191,7 +192,8 @@ void scheduleCoils(uint32_t now)
         coilState[i] = 0;
         lastCoilFireUs[i] = now;
         if (gSparkDouble && coilPulseN[i] == 0) {
-          coilPulseN[i] = 1; /* wait gap, then second spark */
+          coilPulseN[i] = 1;
+          coilDblDeg[i] = deg;
           coilFired[i] = 0;
         } else {
           coilPulseN[i] = 0;
@@ -220,17 +222,17 @@ void scheduleCoils(uint32_t now)
       coilPulseN[i] = 0;
       lastCoilFireUs[i] = now;
     }
-    /* Second pulse: 400 µs gap, half dwell, only if a first spark just happened.
-     * Drop the latch if RPM is too high for two charges in one event. */
+    /* Second pulse after N crank degrees from first spark-off. */
     if (gSparkDouble && coilPulseN[i] == 1 && !coilState[i]) {
-      uint32_t gap = now - lastCoilFireUs[i];
-      uint32_t need = gSparkDblGapUs;
-      if (need < 200u) need = 200u;
-      if (need > 5000u) need = 5000u;
-      if (rpmLive > 3500 || gap > (need + 4000u)) {
+      float need = (float)gSparkDblGapDeg;
+      if (need < 1.0f) need = 1.0f;
+      if (need > 40.0f) need = 40.0f;
+      float moved = angDelta(deg, coilDblDeg[i], cycle);
+      uint32_t age = now - lastCoilFireUs[i];
+      if (rpmLive > 4000 || moved > (need + 25.0f) || age > 12000u) {
         coilPulseN[i] = 0;
         coilFired[i] = 1;
-      } else if (gap >= need) {
+      } else if (moved >= need) {
         ECU_IGN_HI(i);
         coilState[i] = 1;
         coilStartUs[i] = now;

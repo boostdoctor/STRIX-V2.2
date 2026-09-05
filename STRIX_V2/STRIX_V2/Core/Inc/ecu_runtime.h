@@ -114,7 +114,7 @@ extern volatile uint8_t  gCoilType;         /* 0=smart 1=dumb 2=dist */
 extern volatile uint8_t  gCoilChargeMode;   /* 0=duty 1=charge */
 extern volatile uint16_t gDwellNomUs;
 extern volatile uint8_t  gSparkDouble;
-extern volatile uint16_t gSparkDblGapUs;
+extern volatile uint8_t  gSparkDblGapDeg;
 extern volatile uint16_t gBatchAboveRpm;
 extern float gMapLoadRefKpa;
 extern float gMapKpaMin; /* ADC 0 */
