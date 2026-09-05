@@ -224,10 +224,13 @@ void scheduleCoils(uint32_t now)
      * Drop the latch if RPM is too high for two charges in one event. */
     if (gSparkDouble && coilPulseN[i] == 1 && !coilState[i]) {
       uint32_t gap = now - lastCoilFireUs[i];
-      if (rpmLive > 3500 || gap > 3000u) {
+      uint32_t need = gSparkDblGapUs;
+      if (need < 200u) need = 200u;
+      if (need > 5000u) need = 5000u;
+      if (rpmLive > 3500 || gap > (need + 4000u)) {
         coilPulseN[i] = 0;
         coilFired[i] = 1;
-      } else if (gap >= 400u) {
+      } else if (gap >= need) {
         ECU_IGN_HI(i);
         coilState[i] = 1;
         coilStartUs[i] = now;

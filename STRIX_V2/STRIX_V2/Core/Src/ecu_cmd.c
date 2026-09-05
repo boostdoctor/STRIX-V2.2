@@ -981,6 +981,19 @@ if (!strncmp(line, "SAVE", 4)) {
     }
     return;
   }
+  if (!strncmp(line, "SET:SPKGAP,", 11)) {
+    float ms = strtof(line + 11, NULL);
+    if (ms < 0.2f) ms = 0.2f;
+    if (ms > 5.0f) ms = 5.0f;
+    gSparkDblGapUs = (uint16_t)(ms * 1000.0f + 0.5f);
+    ECU_Persist_Touch();
+    {
+      char b[32];
+      snprintf(b, sizeof b, "OK:SPKGAP,%.2f\r\n", (double)ms);
+      uartWrite(b);
+    }
+    return;
+  }
   if (!strncmp(line, "SET:FAN,", 8)) {
     int t = atoi(line + 8);
     if (t < 60) t = 60;
@@ -1051,7 +1064,7 @@ if (!strncmp(line, "SAVE", 4)) {
     char b[280];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f,DWELL:%.1f,SPKDBL:%u\r\n",
+             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f,DWELL:%.1f,SPKDBL:%u,SPKGAP:%.2f\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
@@ -1061,7 +1074,8 @@ if (!strncmp(line, "SAVE", 4)) {
              (double)gMapKpaMin, (double)gMapKpaMax,
              (unsigned)gRpmLimit, (unsigned)gRpmCutMode,
              (double)gInjDeadMs,
-             (double)(gDwellNomUs * 0.001f), (unsigned)gSparkDouble);
+             (double)(gDwellNomUs * 0.001f), (unsigned)gSparkDouble,
+             (double)(gSparkDblGapUs * 0.001f));
     uartWrite(b);
     return;
   }

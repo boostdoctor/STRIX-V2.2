@@ -110,6 +110,7 @@ volatile uint8_t  gCoilType = 0;
 volatile uint8_t  gCoilChargeMode = 0;
 volatile uint16_t gDwellNomUs = CFG_DWELL_NOM_US; /* tuner charge time */
 volatile uint8_t  gSparkDouble = 0;              /* 2nd spark per event */
+volatile uint16_t gSparkDblGapUs = 500;          /* delay first→second */
 volatile uint16_t gBatchAboveRpm = 3000; /* hybrid switch point */
 uint16_t adcFlex = 0;
 float    engEthanol = 0.0f;

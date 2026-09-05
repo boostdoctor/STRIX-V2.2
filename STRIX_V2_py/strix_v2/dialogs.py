@@ -427,8 +427,18 @@ class EngineSettingsDialog(QDialog):
         form.addRow("Coil charge time", self.dwell_ms)
         self.spk_double = QCheckBox("Double spark (2 pulses / event)")
         self.spk_double.setChecked(bool(settings.get("spark_double")))
-        self.spk_double.setToolTip("Second shorter spark ~0.5 ms after the first.")
+        self.spk_double.setToolTip("Second shorter spark after an adjustable gap.")
         form.addRow(self.spk_double)
+        self.spk_gap = QDoubleSpinBox()
+        self.spk_gap.setRange(0.2, 5.0)
+        self.spk_gap.setDecimals(2)
+        self.spk_gap.setSingleStep(0.05)
+        self.spk_gap.setSuffix(" ms")
+        self.spk_gap.setValue(float(settings.get("spark_double_gap_ms") or 0.50))
+        self.spk_gap.setToolTip("Delay from first spark-off to second charge.")
+        self.spk_gap.setEnabled(self.spk_double.isChecked())
+        self.spk_double.toggled.connect(self.spk_gap.setEnabled)
+        form.addRow("Multi-spark gap", self.spk_gap)
 
         def _on_coil_type():
             if self.coil.currentText() == "Smart":
@@ -1157,6 +1167,8 @@ class EngineSettingsDialog(QDialog):
             settings["dwell_ms"] = float(self.dwell_ms.value())
         if hasattr(self, "spk_double"):
             settings["spark_double"] = bool(self.spk_double.isChecked())
+        if hasattr(self, "spk_gap"):
+            settings["spark_double_gap_ms"] = float(self.spk_gap.value())
         settings["firing_order"] = self.fire.currentText()
         if hasattr(self, "idle_cl_en"):
             settings["idle_enable"] = bool(self.idle_cl_en.isChecked())

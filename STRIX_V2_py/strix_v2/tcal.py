@@ -22,6 +22,7 @@ def default_engine_settings() -> dict[str, Any]:
         "coil_charge_mode": "Constant Duty",  # Smart | Dumb | Distributor
         "dwell_ms": 3.0,
         "spark_double": False,
+        "spark_double_gap_ms": 0.50,
         "load_mode": "MAP",  # MAP | TPS | HYBRID
         "map_kpa_max": 240,
         "map_bins": make_map_bins(240),

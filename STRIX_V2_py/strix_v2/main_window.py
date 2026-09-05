@@ -869,6 +869,11 @@ class MainWindow(QMainWindow):
                 pass
         if "SPKDBL" in parts:
             self.engine["spark_double"] = bool(int(float(parts["SPKDBL"])))
+        if "SPKGAP" in parts:
+            try:
+                self.engine["spark_double_gap_ms"] = float(parts["SPKGAP"])
+            except ValueError:
+                pass
         if "BATCHRPM" in parts:
             self.engine["batch_above_rpm"] = int(float(parts["BATCHRPM"]))
         if "VEMODE" in parts:
@@ -1291,6 +1296,7 @@ class MainWindow(QMainWindow):
             self._tx("SET:COILMODE,%d\n" % cm)
         self._tx("SET:DWELL,%.1f\n" % float(eng.get("dwell_ms") or 3.0))
         self._tx("SET:SPKDBL,%d\n" % (1 if eng.get("spark_double") else 0))
+        self._tx("SET:SPKGAP,%.2f\n" % float(eng.get("spark_double_gap_ms") or 0.50))
         self._tx("SET:IGNMODE,%d\n" % (1 if ign_seq else 0))
         self._tx("SET:INJMODE,%d\n" % (2 if inj_seq else 1))
         eoi = int(eng.get("eoi_btdc") or 340)
