@@ -390,12 +390,14 @@ void ECU_Loop(void) {
       if (expCam > 500000UL) expCam = 500000UL;
     }
     /* unlock threshold = 2.5 × expected (missed edges) */
-    uint32_t camTimeout = (expCam * 5UL) / 2UL;
+    /* 4 crank revs — 720° cam is one pulse / 2 revs */
+    uint32_t camTimeout = expCam * 4UL;
 
     if (camSynced) {
-      if (lastCamEdgeUs == 0)
-        lastCamEdgeUs = nowu;
-      if ((nowu - lastCamEdgeUs) > camTimeout) {
+      if (lastCamEdgeUs == 0) {
+        camSynced = 0;
+        camLockHits = 0;
+      } else if ((nowu - lastCamEdgeUs) > camTimeout) {
         if (camUnlockMiss < 255)
           camUnlockMiss++;
         /* Leave soft: need 5 consecutive timeout ticks OR 4× expected period */

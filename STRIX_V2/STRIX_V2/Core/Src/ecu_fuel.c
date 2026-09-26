@@ -88,13 +88,27 @@ void serviceInjection(void) {
     if (bank14 || bank23) {
       uint8_t a = bank14 ? 1u : 2u;
       uint8_t b = bank14 ? 4u : 3u;
-      uint16_t pwc = (pw < 2000) ? 3000 : pw;
+      uint16_t pwc = pw;
+      if (rpmLive < 200 && pwc < 2500) pwc = 2500;
+      else if (pwc < 1000) pwc = 1000;
+      if (rpmLive > 0 && rpmLive < 500 && pwc > 4000) pwc = 4000;
       if (pwc > 20000) pwc = 20000;
       for (uint8_t k = 0; k < 2; k++) {
         uint8_t i = (k == 0) ? a : b;
         if (i > MAX_CYL) continue;
         if (injOn[i]) continue;
         if (injDisableMask & (1u << (i - 1))) continue;
+        /* Below 500 RPM a 3 ms pulse retriggered every gap looks DC-on. */
+        {
+          uint32_t minOff = 4000u;
+          uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+          uint8_t nth = (gTeeth > 1) ? gTeeth : 36;
+          uint32_t ev = T * (uint32_t)nth / 2u;
+          if (ev > 8000u) minOff = ev / 4u;
+          if (minOff < 4000u) minOff = 4000u;
+          if (injEndUs[i] && (int32_t)(now - injEndUs[i]) < (int32_t)minOff)
+            continue;
+        }
         uint16_t st = syncLocked ? crankRevId : (uint16_t)(ti | 0x8000u);
         if (st != 0 && injStamp[i] == st)
           continue;

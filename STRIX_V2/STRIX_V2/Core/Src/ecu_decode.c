@@ -56,16 +56,19 @@ static uint8_t __attribute__((unused)) crankDebounceOk(uint32_t dt_us, uint32_t 
 
 static uint8_t camDebounceOk(uint32_t dt_us, uint8_t locked)
 {
-  uint32_t minUs = CAM_DEB_IDLE_US;
-  if (locked && toothPeriodUs > 0 && gTeeth >= 2) {
-    uint32_t exp = toothPeriodUs * (uint32_t)gTeeth; /* ~1 crank rev */
-    if (exp < 20000UL) exp = 20000UL;
-    minUs = exp / 8UL; /* reject chatter < 1/8 rev */
-    if (minUs < CAM_DEB_ABS_US) minUs = CAM_DEB_ABS_US;
-    if (minUs > 50000UL) minUs = 50000UL;
-  } else if (!locked) {
-    minUs = CAM_DEB_ABS_US; /* allow faster edges while seeking */
+  /* Cam is 1 pulse / 360–720°. Reject tooth-rate noise on a floating PA15. */
+  uint32_t rev = 0;
+  if (toothPeriodFilt >= 40u && gTeeth >= 2)
+    rev = toothPeriodFilt * (uint32_t)gTeeth;
+  else if (toothPeriodUs >= 40u && gTeeth >= 2)
+    rev = toothPeriodUs * (uint32_t)gTeeth;
+  uint32_t minUs = 15000UL; /* 15 ms seek floor (~4000 RPM cam/720 worst) */
+  if (rev >= 8000UL) {
+    minUs = rev / 3UL;           /* < 1/3 crank rev is chatter */
+    if (minUs < 4000UL) minUs = 4000UL;
+    if (minUs > 200000UL) minUs = 200000UL;
   }
+  (void)locked;
   return (dt_us >= minUs) ? 1u : 0u;
 }
 
@@ -951,12 +954,13 @@ void ECU_CrankCapture(uint32_t capt)
       camUnlockMiss = 0;
       if (camLockHits < 255)
         camLockHits++;
-      if (camLockHits >= 2)
+      /* 4 home pulses — two gaps of noise must not light CAM. */
+      if (camLockHits >= 4)
         camSynced = 1;
-    } else if (syncLocked) {
+    } else if (syncLocked || camSynced) {
       if (camUnlockMiss < 255)
         camUnlockMiss++;
-      if (camUnlockMiss >= 5) {
+      if (camUnlockMiss >= 8) {
         camSynced = 0;
         camLockHits = 0;
       }
