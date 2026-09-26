@@ -7,7 +7,7 @@
 #define CFG_TEETH            36
 #define CFG_MISSING          1
 #define CFG_TRIG_ANGLE       30
-#define CFG_RPM_LIMIT        7000
+#define CFG_RPM_LIMIT        10000
 #define CFG_FAN_C            95
 #define CFG_LOAD_ALPHA_N     0
 #define CFG_SEQUENTIAL       1

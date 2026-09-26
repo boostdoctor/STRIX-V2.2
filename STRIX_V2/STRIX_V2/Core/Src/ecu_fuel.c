@@ -82,8 +82,9 @@ void serviceInjection(void) {
     uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
     uint8_t ti = (uint8_t)(toothIndex % teeth);
     uint8_t half = (uint8_t)(teeth / 2u);
-    uint8_t bank14 = (ti == 0u || ti == 1u);
-    uint8_t bank23 = (ti == half || ti == (uint8_t)(half + 1u));
+    /* One tooth per bank — 0 AND 1 retriggered 1+4 until they stuck on. */
+    uint8_t bank14 = (ti == 0u);
+    uint8_t bank23 = (ti == half);
     if (bank14 || bank23) {
       uint8_t a = bank14 ? 1u : 2u;
       uint8_t b = bank14 ? 4u : 3u;

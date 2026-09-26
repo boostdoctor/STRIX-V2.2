@@ -911,9 +911,13 @@ void ECU_CrankCapture(uint32_t capt)
     uint32_t rq = (dt << 8) / prevToothDt;
     uint32_t lo = sh->gap_lo_q8;
     uint32_t hi = sh->gap_hi_q8;
-    /* Sweep: period shrinks so a real 3x gap looks like ~2x vs stale prev. */
-    if (lo > 400u) lo = (lo * 3u) / 4u; /* extra 25% */
-    if (hi < 1400u) hi = (hi * 5u) / 4u;
+    /* Widen only when tooth time is already short (high RPM sweep).
+     * Below ~1500 RPM a 1.7× window treats every tooth as a gap → index
+     * stuck at 0 → only INJ1/4 and IGN1/4. */
+    if (prevToothDt < 800u) {
+      if (lo > 400u) lo = (lo * 3u) / 4u;
+      if (hi < 1400u) hi = (hi * 5u) / 4u;
+    }
     if (rq >= lo && rq <= hi)
       isGap = 1;
   }

@@ -104,8 +104,8 @@ uint32_t aseStartMs = 0;
 uint8_t  aseActive  = 0;
 uint8_t  wasRunning = 0;
 /* Injection mode: 0=AUTO 1=BATCH 2=SEQUENTIAL 3=HYBRID (seq below RPM, batch above) */
-volatile uint8_t  gInjMode = 1;          /* default batch */
-volatile uint8_t  gIgnMode = 0;          /* default wasted spark */
+volatile uint8_t  gInjMode = 2;          /* default sequential */
+volatile uint8_t  gIgnMode = 1;          /* default sequential */
 volatile uint8_t  gCoilType = 0;
 volatile uint8_t  gCoilChargeMode = 0;
 volatile uint16_t gDwellNomUs = CFG_DWELL_NOM_US; /* tuner charge time */
@@ -163,7 +163,7 @@ volatile uint8_t  cam2UnlockMiss = 0;
 volatile uint16_t rpmLive = 0;
 uint8_t gWheelId = 9; /* default 60-2+cam */
 volatile uint8_t mapDumpBusy = 0;
-uint8_t gCamMode = 0;
+uint8_t gCamMode = 1; /* sequential default needs cam home */
 
 /* Bulk-upload state (UPLOAD:ADV / UPLOAD:INJ from tuner) */
 uint8_t uploadMode = 0;   /* 0=idle  1=ADV  2=INJ */
