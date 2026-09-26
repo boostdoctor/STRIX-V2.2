@@ -33,6 +33,7 @@ def default_engine_settings() -> dict[str, Any]:
         "inj_mode": "Sequential",
         "ign_mode": "Wasted Spark",
         "batch_above_rpm": 6500,
+        "batch_duty_pct": 75,
         "fp_prime_ms": 2000,
         "start_prime_ms": 50,
         "start_prime_enable": True,

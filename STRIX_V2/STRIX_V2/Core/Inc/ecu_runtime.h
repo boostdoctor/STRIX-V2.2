@@ -116,6 +116,8 @@ extern volatile uint16_t gDwellNomUs;
 extern volatile uint8_t  gSparkDouble;
 extern volatile uint8_t  gSparkDblGapDeg;
 extern volatile uint16_t gBatchAboveRpm;
+extern volatile uint8_t  gBatchDutyPct;
+extern volatile uint8_t  gInjDutyPct;
 extern float gMapLoadRefKpa;
 extern float gMapKpaMin; /* ADC 0 */
 extern float gMapKpaMax; /* ADC 4095 = sensor max kPa */

@@ -83,6 +83,7 @@ DEFAULT_BAT_COMP = [[80 + i * 8, 15 - i, max(-2, 4 - i // 2)] for i in range(10)
 OPTIONAL_STRIP = [
     ("ign", "IGN"),
     ("pw", "INJ ms"),
+    ("idc", "IDC %"),
     ("baseign", "BASE IGN"),
     ("bat", "BAT"),
     ("afr", "AFR"),

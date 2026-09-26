@@ -87,7 +87,7 @@ void sendTelemetry(void) {
 
   n = snprintf(b, sizeof b,
     "AFR:%.2f,LAM:%.3f,VE:%.1f,MCELL:%u:%u,BASEIGN:%d,BASEINJ:%u,O2:%.2f,STFT:%.1f,LTFT:%.1f,TTRIM:%.1f,CL:%u,LOAD:%.2f,SYNCQ:%u,"
-    "PWUS:%u,INJMODE:%u,SEQ:%u,BATCHRPM:%u,IDLE:%u,IRPM:%.0f,ITHR:%.1f,DASH:%.1f,"
+    "PWUS:%u,IDC:%u,INJMODE:%u,SEQ:%u,BATCHRPM:%u,BATCHDUTY:%u,IDLE:%u,IRPM:%.0f,ITHR:%.1f,DASH:%.1f,"
     "DFCO:%u,OFC:%u,VVT1:%u,VVT2:%u,C1PH:%.0f,C2PH:%.0f,ASE:%u,CLTCH:%u,"
     "LC:%u,ALS:%u,ALSTO:%u,ALSF:%.0f,FFS:%u,INJMSK:%u,FLOOD:%u,LCD:%u,LCF:%.1f,LCR:%.1f\r\n",
     (double)engAfr, (double)afrToLambda(engAfr),
@@ -97,8 +97,8 @@ void sendTelemetry(void) {
     (double)engO2,
     (double)stftPct, (double)ltftPct, (double)totalTrimPct(),
     (unsigned)o2ClActive, (double)engLoad, (unsigned)syncQualityPct(),
-    pw_us, (unsigned)gInjMode, (unsigned)injSequentialActive(),
-    (unsigned)gBatchAboveRpm,
+    pw_us, (unsigned)gInjDutyPct, (unsigned)gInjMode, (unsigned)injSequentialActive(),
+    (unsigned)gBatchAboveRpm, (unsigned)gBatchDutyPct,
     (unsigned)idleActive, (double)idleTargetFromEct(engEct),
     (double)idleThrottle, (double)dashpotPct,
     (unsigned)dfcoActive, (unsigned)dfcoActive,
@@ -167,6 +167,7 @@ void ECU_Settings_Pack(EcuFlashSettings *out)
   out->coilChargeMode = gCoilChargeMode;
   out->camModeP1 = gCamMode ? 2u : 1u;
   out->batchAboveRpm = gBatchAboveRpm;
+  out->reserved[3] = gBatchDutyPct;
   out->coilSmart = gCoilSmart;
   out->cylinders = gCyl;
   out->wheelId = gWheelId;
@@ -227,8 +228,10 @@ void ECU_Settings_Apply(const EcuFlashSettings *in)
   if (in->coilType <= 2) gCoilType = in->coilType;
   if (in->coilChargeMode <= 1) gCoilChargeMode = in->coilChargeMode;
   if (in->camModeP1) gCamMode = (in->camModeP1 >= 2u) ? 1u : 0u;
-  if (in->batchAboveRpm >= 500 && in->batchAboveRpm <= 9000)
+  if (in->batchAboveRpm >= 500 && in->batchAboveRpm <= 12000)
     gBatchAboveRpm = in->batchAboveRpm;
+  if (in->reserved[3] >= 40 && in->reserved[3] <= 95)
+    gBatchDutyPct = in->reserved[3];
   gCoilSmart = in->coilSmart ? 1 : 0;
   if (in->cylinders >= 1 && in->cylinders <= MAX_CYL)
     gCyl = in->cylinders;
@@ -933,6 +936,15 @@ if (!strncmp(line, "SAVE", 4)) {
     }
     return;
   }
+  if (!strncmp(line, "SET:BATCHDUTY,", 14)) {
+    int d = atoi(line + 14);
+    if (d < 40) d = 40;
+    if (d > 95) d = 95;
+    gBatchDutyPct = (uint8_t)d;
+    ECU_Persist_Touch();
+    uartWrite("OK:BATCHDUTY\r\n");
+    return;
+  }
   if (!strncmp(line, "SET:BATCHRPM,", 13)) {
     int r = atoi(line + 13);
     if (r < 500) r = 500;
@@ -989,7 +1001,8 @@ if (!strncmp(line, "SAVE", 4)) {
     ECU_Persist_Touch();
     {
       char b[24];
-      snprintf(b, sizeof b, "OK:SPKGAP,%u\r\n", (unsigned)gSparkDblGapDeg);
+      snprintf(b, sizeof b, "OK:SPKGAP,%u\r\n", (unsigned)gSparkDblGapDeg,
+             (unsigned)gBatchAboveRpm, (unsigned)gBatchDutyPct);
       uartWrite(b);
     }
     return;
@@ -1064,7 +1077,7 @@ if (!strncmp(line, "SAVE", 4)) {
     char b[280];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f,DWELL:%.1f,SPKDBL:%u,SPKGAP:%u\r\n",
+             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f,DWELL:%.1f,SPKDBL:%u,SPKGAP:%u,BATCHRPM:%u,BATCHDUTY:%u\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
@@ -1075,7 +1088,8 @@ if (!strncmp(line, "SAVE", 4)) {
              (unsigned)gRpmLimit, (unsigned)gRpmCutMode,
              (double)gInjDeadMs,
              (double)(gDwellNomUs * 0.001f), (unsigned)gSparkDouble,
-             (unsigned)gSparkDblGapDeg);
+             (unsigned)gSparkDblGapDeg,
+             (unsigned)gBatchAboveRpm, (unsigned)gBatchDutyPct);
     uartWrite(b);
     return;
   }

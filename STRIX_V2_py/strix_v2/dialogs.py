@@ -619,6 +619,19 @@ class EngineSettingsDialog(QDialog):
             "Injector deadtime at 13.2 V (pintle open delay).\n"
             "Added to every pulse. Scales as 13.2/Vbat at other voltages.")
         inj_form.addRow("Injector deadtime", self.inj_dead)
+        self.hybrid_rpm = QSpinBox()
+        self.hybrid_rpm.setRange(500, 12000)
+        self.hybrid_rpm.setSingleStep(100)
+        self.hybrid_rpm.setSuffix(" RPM")
+        self.hybrid_rpm.setValue(int(settings.get("batch_above_rpm") or 6500))
+        self.hybrid_rpm.setToolTip("Sequential below this RPM (if IDC also below limit).")
+        inj_form.addRow("Hybrid batch above", self.hybrid_rpm)
+        self.hybrid_duty = QSpinBox()
+        self.hybrid_duty.setRange(40, 95)
+        self.hybrid_duty.setSuffix(" %")
+        self.hybrid_duty.setValue(int(settings.get("batch_duty_pct") or 75))
+        self.hybrid_duty.setToolTip("Switch to 360° half-PW batch at this injector duty.")
+        inj_form.addRow("Hybrid batch IDC", self.hybrid_duty)
 
         def _fuel_mode_fields(mode: str):
             ve_on = (mode == "VE")
@@ -1127,7 +1140,12 @@ class EngineSettingsDialog(QDialog):
         settings["inj_mode"] = inj
         settings["run_mode"] = "Sequential" if (ign == "Sequential" and inj == "Sequential") else "Batch"
         settings["cam_home"] = self.cam_home.isChecked()
-        settings["batch_above_rpm"] = int(settings.get("batch_above_rpm") or 6500)
+        if hasattr(self, "hybrid_rpm"):
+            settings["batch_above_rpm"] = int(self.hybrid_rpm.value())
+        else:
+            settings["batch_above_rpm"] = int(settings.get("batch_above_rpm") or 6500)
+        if hasattr(self, "hybrid_duty"):
+            settings["batch_duty_pct"] = int(self.hybrid_duty.value())
         if hasattr(self, "fuel_mode"):
             settings["ve_mode"] = (self.fuel_mode.currentText() == "VE")
             if hasattr(self, "ve_mode_cb"):

@@ -22,6 +22,8 @@ KEY_MAP = {
     "PW": "pw",
     "INJ": "pw",
     "PWUS": "pwus",
+    "IDC": "idc",
+    "BATCHDUTY": "batch_duty",
     "BASEIGN": "baseign",
     "BASEINJ": "baseinj",
     "MCELL": "mcell",
@@ -69,6 +71,7 @@ def default_live() -> dict[str, Any]:
         "ign": 0.0,
         "pw": 0.0,
         "pwus": 0,
+        "idc": 0,
         "baseign": None,
         "baseinj": None,
         "mcell_r": -1,
@@ -140,7 +143,7 @@ def parse_line(line: str, live: dict[str, Any]) -> dict[str, Any]:
                 live["ecu_uid"] = val
                 accepted += 1
                 continue
-            if dest in ("sync", "cam", "fan", "fp", "pwus", "cyl", "dwell", "ase", "dfco", "cut", "lc_decay"):
+            if dest in ("sync", "cam", "fan", "fp", "pwus", "cyl", "dwell", "ase", "dfco", "cut", "lc_decay", "idc"):
                 live[dest] = int(float(val))
             elif dest == "rpm":
                 live[dest] = int(float(val))

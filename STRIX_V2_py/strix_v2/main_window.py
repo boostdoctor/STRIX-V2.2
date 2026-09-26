@@ -82,7 +82,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_STYLE)
 
         self.engine = default_engine_settings()
-        self.strip_optional: set[str] = {"ign", "pw", "bat", "afr", "load", "dwell"}
+        self.strip_optional: set[str] = {"ign", "pw", "idc", "bat", "afr", "load", "dwell"}
         self.meta = load_device_meta()
         self.device_id = get_or_create_device_id()
         self.live = default_live()
@@ -876,6 +876,8 @@ class MainWindow(QMainWindow):
                 pass
         if "BATCHRPM" in parts:
             self.engine["batch_above_rpm"] = int(float(parts["BATCHRPM"]))
+        if "BATCHDUTY" in parts:
+            self.engine["batch_duty_pct"] = int(float(parts["BATCHDUTY"]))
         if "VEMODE" in parts:
             self.engine["ve_mode"] = bool(int(float(parts["VEMODE"])))
             self.btn_ve.blockSignals(True)
@@ -1305,7 +1307,8 @@ class MainWindow(QMainWindow):
         if eoi > 540:
             eoi = 540
         self._tx("SET:EOI,%d\n" % eoi)
-        self._tx("SET:BATCHRPM,%d\n" % int(eng.get("batch_above_rpm") or 3000))
+        self._tx("SET:BATCHRPM,%d\n" % int(eng.get("batch_above_rpm") or 6500))
+        self._tx("SET:BATCHDUTY,%d\n" % int(eng.get("batch_duty_pct") or 75))
         fan_en = 1 if eng.get("fan_enable", True) else 0
         self._tx("SET:SENS:FANEN,%d\n" % fan_en)
         if fan_en:

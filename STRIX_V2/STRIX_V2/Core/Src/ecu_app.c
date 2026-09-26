@@ -106,23 +106,31 @@ uint8_t injDutyPctNow(void)
     return 100;
   uint32_t pct = ((uint32_t)injPwUs * 100u) / ev;
   if (pct > 100u) pct = 100u;
+  gInjDutyPct = (uint8_t)pct;
   return (uint8_t)pct;
 }
 
 uint8_t injSequentialActive(void)
 {
-  /* 0=auto/hybrid 1=force batch 2=seq-prefer 3=hybrid */
+  (void)injDutyPctNow();
+  /* Crank present below 200 RPM: always 360° batch from tooth index. */
+  uint8_t spinning = (lastToothUs != 0);
+  if (spinning && (rpmLive < 200 || rpmLive == 0))
+    return 0;
   if (gInjMode == 1)
     return 0;
   uint16_t thr = gBatchAboveRpm ? gBatchAboveRpm : 6500;
-  if (thr < 2000) thr = 2000;
+  if (thr < 500) thr = 500;
   if (thr > 12000) thr = 12000;
+  uint8_t dlim = gBatchDutyPct ? gBatchDutyPct : 75;
+  if (dlim < 40) dlim = 40;
+  if (dlim > 95) dlim = 95;
   uint8_t duty = injDutyPctNow();
   static uint8_t lat = 1;
-  if (rpmLive >= (int)thr || duty >= 75)
-    lat = 0; /* async batch: 360° half-PW */
-  else if (rpmLive + 200 < (int)thr && duty < 70)
-    lat = 1; /* sequential 720° */
+  if (rpmLive >= (int)thr || duty >= dlim)
+    lat = 0;
+  else if (rpmLive + 200 < (int)thr && duty + 5 < dlim)
+    lat = 1;
   return lat;
 }
 

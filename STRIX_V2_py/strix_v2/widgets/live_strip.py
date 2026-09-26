@@ -12,7 +12,7 @@ _TAG = (
 _VAL = (
     "font-family: 'Consolas','Cascadia Mono','Courier New',monospace;"
     "font-size:18px;font-weight:700;"
-    "min-width:72px;max-width:78px;min-height:28px;max-height:28px;"
+    "min-width:64px;max-width:70px;min-height:28px;max-height:28px;"
     "color:#f2f6ff;"
 )
 
@@ -24,6 +24,7 @@ STRIP_KEYS = (
     ("load", "LOAD", "Engine load"),
     ("ve", "VE%", "Volumetric efficiency / cell"),
     ("pw", "INJ", "Injector pulse width ms"),
+    ("idc", "IDC", "Injector duty cycle %"),
     ("sync", "SYNC", "Crank lock"),
     ("cam", "CAM", "Cam home"),
     ("ect", "ECT", "Coolant °C"),
@@ -36,7 +37,7 @@ STRIP_KEYS = (
 class _Cell(QWidget):
     def __init__(self, tag: str, tip: str = "", parent=None):
         super().__init__(parent)
-        self.setFixedWidth(78)
+        self.setFixedWidth(70)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         if tip:
             self.setToolTip(tip)
@@ -91,7 +92,7 @@ class LiveStrip(QFrame):
         self._optional_keys = set(keys)
         always = set(ALWAYS_STRIP)
         # VE / LOAD / INJ / IGN stay on the main strip
-        always.update(("ve", "pw", "load", "ign"))
+        always.update(("ve", "pw", "idc", "load", "ign"))
         for k, w in self.cells.items():
             w.setVisible(k in always or k in self._optional_keys)
 
@@ -130,6 +131,10 @@ class LiveStrip(QFrame):
                 "LOCK" if cam_on else "—",
                 "#55ff99" if cam_on else "#888888",
             )
+        if "idc" in self.cells and self.cells["idc"].isVisible():
+            idc = int(float(live.get("idc") or 0))
+            col = "#ff5555" if idc >= 85 else ("#ffaa44" if idc >= 70 else None)
+            self.cells["idc"].set_value(f"{idc}%", col)
         self.cells["ect"].set_value("ERROR" if ect > 205 else f"{ect:.0f}°C", "#ff3333" if ect > 205 else ("#ff7777" if ect > 105 else None), alarm=ect > 205)
         afr = float(live.get("afr") or 0)
         self.cells["afr"].set_value("ERROR" if afr > 22 else f"{afr:.1f}", "#ff3333" if afr > 22 else None, alarm=afr > 22)
