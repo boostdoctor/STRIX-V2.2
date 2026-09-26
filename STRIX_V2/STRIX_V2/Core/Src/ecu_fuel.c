@@ -76,12 +76,14 @@ void serviceInjection(void) {
 
   static uint16_t injStamp[MAX_CYL + 1];
 
-  /* Pair path only when sequential is OFF. Sequential uses 720° below. */
-  if (!injSequentialActive()) {
+  /* Pair path when unlocked, no cam, or batch. Seq 720° only with lock+cam.
+   * toothIndex is modulo phys so banks still fire if the gap was missed. */
+  if (!syncLocked || !camSynced || !injSequentialActive()) {
     uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
+    uint8_t ti = (uint8_t)(toothIndex % teeth);
     uint8_t half = (uint8_t)(teeth / 2u);
-    uint8_t bank14 = (toothIndex == 0u || toothIndex == 1u);
-    uint8_t bank23 = (toothIndex == half || toothIndex == (uint8_t)(half + 1u));
+    uint8_t bank14 = (ti == 0u || ti == 1u);
+    uint8_t bank23 = (ti == half || ti == (uint8_t)(half + 1u));
     if (bank14 || bank23) {
       uint8_t a = bank14 ? 1u : 2u;
       uint8_t b = bank14 ? 4u : 3u;
@@ -92,12 +94,13 @@ void serviceInjection(void) {
         if (i > MAX_CYL) continue;
         if (injOn[i]) continue;
         if (injDisableMask & (1u << (i - 1))) continue;
-        if (injStamp[i] == crankRevId && crankRevId != 0)
+        uint16_t st = syncLocked ? crankRevId : (uint16_t)(ti | 0x8000u);
+        if (st != 0 && injStamp[i] == st)
           continue;
         ECU_INJ_HI(i);
         injOn[i] = 1;
         injFiredCyc[i] = 1;
-        injStamp[i] = crankRevId;
+        injStamp[i] = st;
         injEndUs[i] = now + pwc;
       }
     }

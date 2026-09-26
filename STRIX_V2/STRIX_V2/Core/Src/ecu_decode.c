@@ -888,10 +888,12 @@ void ECU_CrankCapture(uint32_t capt)
       uint32_t du = now - prevEdgeUs;
       if (du >= 40UL && du <= 500000UL) {
         toothPeriodUs = du;
-        if (toothPeriodFilt)
-          toothPeriodFilt = (toothPeriodFilt * 3UL + du) / 4UL;
-        else
+        if (toothPeriodFilt == 0)
           toothPeriodFilt = du;
+        else if (du < (toothPeriodFilt / 2u) || du > (toothPeriodFilt * 2u))
+          toothPeriodFilt = du; /* snap on sweep */
+        else
+          toothPeriodFilt = (toothPeriodFilt + du) / 2u;
       }
     }
     prevEdgeUs = now;
@@ -907,7 +909,12 @@ void ECU_CrankCapture(uint32_t capt)
   uint8_t isGap = 0;
   if (miss >= 1 && prevToothDt >= 40UL && prevToothDt <= 80000UL) {
     uint32_t rq = (dt << 8) / prevToothDt;
-    if (rq >= sh->gap_lo_q8 && rq <= sh->gap_hi_q8)
+    uint32_t lo = sh->gap_lo_q8;
+    uint32_t hi = sh->gap_hi_q8;
+    /* Sweep: period shrinks so a real 3x gap looks like ~2x vs stale prev. */
+    if (lo > 400u) lo = (lo * 3u) / 4u; /* extra 25% */
+    if (hi < 1400u) hi = (hi * 5u) / 4u;
+    if (rq >= lo && rq <= hi)
       isGap = 1;
   }
 
@@ -965,13 +972,16 @@ void ECU_CrankCapture(uint32_t capt)
   /* Normal tooth — skip period update on long outliers (false gaps) */
   {
     uint32_t rq = (prevToothDt >= 120UL) ? ((dt << 8) / prevToothDt) : 256UL;
-    if (rq >= 160UL && rq <= 400UL) { /* 0.63x .. 1.56x */
+    /* Always track the last interval so a 100→9k sweep does not freeze prev. */
+    if (rq >= 80UL && rq <= 512UL) { /* 0.31x .. 2.0x */
       prevToothDt = dt;
       toothPeriodUs = dt;
-      if (toothPeriodFilt)
-        toothPeriodFilt = (toothPeriodFilt * 3UL + dt) / 4UL;
-      else
+      if (toothPeriodFilt == 0)
         toothPeriodFilt = dt;
+      else if (dt < (toothPeriodFilt / 2u) || dt > (toothPeriodFilt * 2u))
+        toothPeriodFilt = dt;
+      else
+        toothPeriodFilt = (toothPeriodFilt + dt) / 2u;
     }
   }
 
@@ -979,6 +989,8 @@ void ECU_CrankCapture(uint32_t capt)
 
   if (toothIndex < 65000)
     toothIndex++;
+  if (phys >= 2 && toothIndex >= phys)
+    toothIndex = (uint16_t)(toothIndex % phys);
   if (teethSinceGap < 60000)
     teethSinceGap++;
 
@@ -995,8 +1007,12 @@ void ECU_CrankCapture(uint32_t capt)
   }
 
   if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 8u + 4u)) {
-    missedGapStreak++;
+    static uint32_t prevFilt;
+    uint8_t accel = (toothPeriodFilt && prevFilt && toothPeriodFilt + 20u < prevFilt);
+    prevFilt = toothPeriodFilt;
     teethSinceGap = 0;
+    if (!accel)
+      missedGapStreak++;
     if (missedGapStreak >= 10) {
       syncLocked = 0;
       camSynced = 0;
