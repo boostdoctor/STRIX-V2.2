@@ -1,12 +1,13 @@
 /**
- * IWDG: LSI ~32 kHz
- * Prescaler 64, reload 499 → timeout ≈ (499+1)*64/32000 ≈ 1.0 s
- *
- * Register path used so projects without HAL_IWDG_MODULE_ENABLED still work.
- * If HAL IWDG is enabled and hiwdg is inited by Cube, HAL refresh is also used.
+ * IWDG + output watchdog
+ * LSI ~32 kHz, PR=32, RLR=249 → ~250 ms
+ * Output clamp: coils/injectors forced off if held past max pulse.
  */
 #include "main.h"
 #include "ecu_watchdog.h"
+#include "ecu_pins.h"
+#include "ecu_runtime.h"
+#include "ecu_config.h"
 
 #if defined(STM32F411xE) || defined(STM32F4)
 #include "stm32f4xx.h"
@@ -22,52 +23,62 @@ static uint8_t hiwdg_valid(void)
 }
 #endif
 
-void ECU_Watchdog_Init(void)
+static void outputClamp(void)
 {
-  /* IWDG off until CDC is proven — reset loops look like a dead COM */
-  iwdg_on = 0;
-  return;
-  /* original follows if re-enabled */
+  uint32_t now = micros();
+
+  uint32_t cmax = dwellTargetUs ? (uint32_t)dwellTargetUs + 2000u : 6000u;
+  if (cmax < 2500u) cmax = 2500u;
+  if (cmax > 10000u) cmax = 10000u;
+
+  for (uint8_t i = 1; i <= MAX_CYL; i++) {
+    if (coilState[i] && coilStartUs[i] && (now - coilStartUs[i]) > cmax) {
+      ECU_IGN_LO(i);
+      coilState[i] = 0;
+    }
+    if (injOn[i]) {
+      int32_t late = (int32_t)(now - injEndUs[i]);
+      if (late >= 0 || late < -25000) {
+        ECU_INJ_LO(i);
+        injOn[i] = 0;
+      }
+    }
+  }
 }
-void ECU_Watchdog_Init_DISABLED(void)
+
+void ECU_Watchdog_Init(void)
 {
   if (iwdg_on)
     return;
 
 #if defined(HAL_IWDG_MODULE_ENABLED)
   if (hiwdg_valid()) {
-    /* Cube already started IWDG — just mark active */
     iwdg_on = 1;
     HAL_IWDG_Refresh(&hiwdg);
     return;
   }
-  /* Start via HAL */
   hiwdg.Instance = IWDG;
-  hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
-  hiwdg.Init.Reload    = 499; /* ~1 s @ 32 kHz LSI */
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_32;
+  hiwdg.Init.Reload    = 249; /* ~250 ms */
   if (HAL_IWDG_Init(&hiwdg) == HAL_OK) {
     iwdg_on = 1;
     return;
   }
 #endif
 
-  /* Register-level fallback (F4 IWDG) */
-  /* Enable write access */
-  IWDG->KR = 0x5555u;
-  /* PR = 64 (0x04), RLR = 499 */
-  IWDG->PR  = 0x04u;
-  IWDG->RLR = 499u;
-  /* Wait optional — LSI may need settle; reload & start */
-  IWDG->KR = 0xAAAAu; /* reload */
-  IWDG->KR = 0xCCCCu; /* start */
+  IWDG->KR  = 0x5555u;
+  IWDG->PR  = 0x03u;   /* /32 */
+  IWDG->RLR = 249u;
+  IWDG->KR  = 0xAAAAu;
+  IWDG->KR  = 0xCCCCu;
   iwdg_on = 1;
 }
 
 void ECU_Watchdog_Kick(void)
 {
+  outputClamp();
   if (!iwdg_on)
     return;
-
 #if defined(HAL_IWDG_MODULE_ENABLED)
   if (hiwdg_valid()) {
     (void)HAL_IWDG_Refresh(&hiwdg);

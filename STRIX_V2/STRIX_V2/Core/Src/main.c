@@ -630,8 +630,8 @@ static void MX_TIM5_Init(void)
   sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
   sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
   sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  /* fDTS, N=8 — kills VR/Hall bounce that flooded TIM5 and locked USB */
-  sConfigIC.ICFilter = 8;
+  /* N=4: N=8 ate 60-2 teeth above ~6.7k (T≈150 µs). Bounce still rejected. */
+  sConfigIC.ICFilter = 4;
   if (HAL_TIM_IC_ConfigChannel(&htim5, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();

@@ -245,6 +245,14 @@ void ECU_Loop(void) {
     if (!pins_ok) { ecuInjGpioInit(); pins_ok = 1; }
   }
   {
+    static uint8_t wd_on;
+    if (!wd_on && HAL_GetTick() > 3000u) {
+      ECU_Watchdog_Init();
+      wd_on = 1;
+    }
+    ECU_Watchdog_Kick();
+  }
+  {
     uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
     uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
     if (T >= 80u && teeth >= 2) {

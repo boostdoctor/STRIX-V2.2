@@ -876,7 +876,7 @@ void ECU_CrankCapture(uint32_t capt)
   lastCapt = capt;
 
   /* Hard reject bounce / stalled overflow — no rollback games */
-  if (dt < 80UL || dt > 800000UL)
+  if (dt < 40UL || dt > 800000UL)
     return;
 
   lastToothUs = now;
@@ -886,7 +886,7 @@ void ECU_CrankCapture(uint32_t capt)
     static uint32_t prevEdgeUs;
     if (prevEdgeUs != 0) {
       uint32_t du = now - prevEdgeUs;
-      if (du >= 80UL && du <= 500000UL) {
+      if (du >= 40UL && du <= 500000UL) {
         toothPeriodUs = du;
         if (toothPeriodFilt)
           toothPeriodFilt = (toothPeriodFilt * 3UL + du) / 4UL;
@@ -905,7 +905,7 @@ void ECU_CrankCapture(uint32_t capt)
   if (phys < 2) phys = 2;
 
   uint8_t isGap = 0;
-  if (miss >= 1 && prevToothDt >= 150UL && prevToothDt <= 80000UL) {
+  if (miss >= 1 && prevToothDt >= 40UL && prevToothDt <= 80000UL) {
     uint32_t rq = (dt << 8) / prevToothDt;
     if (rq >= sh->gap_lo_q8 && rq <= sh->gap_hi_q8)
       isGap = 1;
@@ -921,7 +921,7 @@ void ECU_CrankCapture(uint32_t capt)
     }
 
     uint32_t T = dt / ((uint32_t)miss + 1UL);
-    if (T < 150UL) T = 150UL;
+    if (T < 40UL) T = 40UL;
     toothPeriodUs = T;
     toothPeriodFilt = T;
     prevToothDt = T;
@@ -994,10 +994,10 @@ void ECU_CrankCapture(uint32_t capt)
     syncLocked = 1;
   }
 
-  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 6u + 4u)) {
+  if (miss >= 1 && syncLocked && teethSinceGap > (uint16_t)(phys * 8u + 4u)) {
     missedGapStreak++;
     teethSinceGap = 0;
-    if (missedGapStreak >= 8) {
+    if (missedGapStreak >= 10) {
       syncLocked = 0;
       camSynced = 0;
       gapHits = 0;

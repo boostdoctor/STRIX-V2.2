@@ -2,7 +2,7 @@
  * STRIX V2 — Independent Watchdog (IWDG)
  *
  * LSI-based; survives main clock failure.
- * Default timeout ~1.0 s (safe for main loop; flash path must kick).
+ * Default timeout ~250 ms + GPIO clamp (safe for main loop; flash path must kick).
  *
  * CubeMX optional: if MX_IWDG_Init exists, call ECU_Watchdog_Init() after it
  * or skip Cube and use this module alone.
