@@ -887,6 +887,8 @@ class MainWindow(QMainWindow):
             self._apply_fuel_mode_heatmap(fill_suggested=False)
         if "REQFUEL" in parts:
             self.engine["req_fuel_ms"] = float(parts["REQFUEL"])
+        if "ENGCC" in parts:
+            self.engine["engine_cc"] = int(float(parts["ENGCC"]))
         if "DEAD" in parts:
             try:
                 self.engine["inj_dead_ms"] = float(parts["DEAD"])
@@ -1005,6 +1007,7 @@ class MainWindow(QMainWindow):
         p_rat = float(self.engine.get("fuel_pressure_rated_bar") or 3.0)
         if self.connected:
             self._tx("SET:VEMODE,%d\n" % (1 if on else 0))
+            self._tx("SET:ENGCC,%d\n" % int(self.engine.get("engine_cc") or 2000))
             self._tx("SET:REQFUEL,%.2f,%.1f,%.2f,%.2f\n" % (req, flow, p_act, p_rat))
             for r in range(ROWS):
                 for c in range(COLS):
@@ -1159,6 +1162,7 @@ class MainWindow(QMainWindow):
         if self.connected:
             self._push_engine_config(live_only=False)
             self._tx("SET:VEMODE,1\n")
+            self._tx("SET:ENGCC,%d\n" % int(self.engine.get("engine_cc") or 2000))
             self._tx("SET:REQFUEL,%.2f,%.1f,%.2f,%.2f\n" % (
                 float(self.engine.get("req_fuel_ms") or 2.5),
                 float(self.engine.get("inj_flow_cc") or 220),

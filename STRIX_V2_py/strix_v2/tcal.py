@@ -40,7 +40,8 @@ def default_engine_settings() -> dict[str, Any]:
         "inj_flow_cc": 220,   # injector flow cc/min @ rated pressure
         "fuel_pressure_bar": 3.0,       # actual rail pressure (bar)
         "fuel_pressure_rated_bar": 3.0, # pressure where flow_cc was measured
-        "req_fuel_ms": 2.5,  # ms at 100% VE, 100 kPa, 20 C
+        "req_fuel_ms": 2.5,
+        "engine_cc": 2000,
         "max_inj_ms": 15.0,  # hard ceiling on injector pulse
         "max_advance": 40,  # deg BTDC clamp
         "max_retard": 10,   # deg ATDC clamp (positive number)

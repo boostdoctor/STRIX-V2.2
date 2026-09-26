@@ -64,17 +64,16 @@ void serviceInjection(void) {
 
   /* Spinning = a tooth in the last 300 ms. Do not wait for gap-lock. */
   uint8_t spinning = (lastToothUs != 0 && (now - lastToothUs) < 300000UL);
+  static uint16_t injStamp[MAX_CYL + 1];
   if (!spinning) {
     for (uint8_t i = 1; i <= MAX_CYL; i++) {
-      if (!injOn[i]) {
-        ECU_INJ_LO(i);
-        injReq[i] = 0;
-      }
+      ECU_INJ_LO(i);
+      injOn[i] = 0;
+      injReq[i] = 0;
+      injStamp[i] = 0;
     }
     return;
   }
-
-  static uint16_t injStamp[MAX_CYL + 1];
 
   /* Pair path when unlocked, no cam, or batch. Seq 720° only with lock+cam.
    * toothIndex is modulo phys so banks still fire if the gap was missed. */
@@ -113,7 +112,8 @@ void serviceInjection(void) {
             continue;
         }
         uint16_t st = syncLocked ? crankRevId : (uint16_t)(ti | 0x8000u);
-        if (st != 0 && injStamp[i] == st)
+        if (st != 0 && injStamp[i] == st &&
+            injEndUs[i] && (int32_t)(now - injEndUs[i]) < 20000)
           continue;
         ECU_INJ_HI(i);
         injOn[i] = 1;
@@ -713,6 +713,8 @@ float computeIgnitionAdvance(int8_t base_adv)
   if (idleActive || (rpmLive > 0 && rpmLive < 1400 && engTps < 5.0f)) {
     a += idleIgnLookup(engEct, (float)rpmLive);
   }
+  if (gFlexEnable && engEthanol > 1.0f)
+    a += (engEthanol / 10.0f) * gFlexIgnDegPer10;
 
   totalRetardDeg = retard;
   a -= retard;

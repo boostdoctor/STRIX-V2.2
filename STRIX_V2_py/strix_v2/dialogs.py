@@ -599,6 +599,13 @@ class EngineSettingsDialog(QDialog):
         inj_form.addRow("Fuel pressure (rail)", self.fuel_press)
         inj_form.addRow("Flow rated at", self.fuel_press_rated)
         inj_form.addRow("Req fuel (100% VE)", self.req_fuel)
+        self.engine_cc = QSpinBox()
+        self.engine_cc.setRange(400, 8000)
+        self.engine_cc.setSingleStep(50)
+        self.engine_cc.setSuffix(" cc")
+        self.engine_cc.setValue(int(settings.get("engine_cc") or 2000))
+        self.engine_cc.setToolTip("Displacement used to compute req fuel (air mass / AFR / flow).")
+        inj_form.addRow("Engine capacity", self.engine_cc)
         self.max_inj = QDoubleSpinBox()
         self.max_inj.setMinimumWidth(140)
         self.max_inj.setRange(1.0, 30.0)
@@ -1155,6 +1162,8 @@ class EngineSettingsDialog(QDialog):
         if hasattr(self, "inj_flow"):
             settings["inj_flow_cc"] = float(self.inj_flow.value())
             settings["req_fuel_ms"] = float(self.req_fuel.value())
+        if hasattr(self, "engine_cc"):
+            settings["engine_cc"] = int(self.engine_cc.value())
             if hasattr(self, "max_inj"):
                 settings["max_inj_ms"] = float(self.max_inj.value())
             if hasattr(self, "inj_dead"):

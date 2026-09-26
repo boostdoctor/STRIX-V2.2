@@ -334,7 +334,8 @@ uint8_t bstMapEnable = 1;
 uint8_t bstOpenLoop = 0; /* 0=CL target kPa  1=OL duty % */
 uint8_t gVeMode = 0; /* 1 = fuel map cells are VE % */
 float gInjFlowCcMin = 220.0f; /* injector flow cc/min @ rated pressure */
-float gReqFuelMs = 2.5f; /* ms at 100% VE, 100 kPa, 20 C */
+float gReqFuelMs = 2.5f; /* computed from cc / flow / AFR */
+volatile uint16_t gEngDispCc = 2000;
 float gFuelPressureBar = 3.0f;
 float gFuelPressureRatedBar = 3.0f;
 

@@ -94,6 +94,39 @@ uint8_t ignSequentialActive(void)
   return (gIgnMode == 1) ? 1u : 0u;
 }
 
+void ECU_UpdateReqFuel(void)
+{
+  /* One intake stroke / cyl / 720° at 100 kPa, 20 °C, 100% VE.
+   * m_air = P V / R T; fuel = air / AFR; t = vol / flow. */
+  float cc = (float)(gEngDispCc ? gEngDispCc : 2000);
+  if (cc < 400.0f) cc = 400.0f;
+  if (cc > 8000.0f) cc = 8000.0f;
+  uint8_t n = (gCyl >= 1 && gCyl <= MAX_CYL) ? gCyl : 4;
+  float vCylL = (cc / (float)n) * 0.001f;
+  float densAir = 1.204f; /* kg/m³ = g/L @ 20 °C 100 kPa */
+  float mAir = densAir * vCylL; /* grams */
+  float e = 0.0f;
+  if (gFlexEnable)
+    e = engEthanol * 0.01f;
+  if (e < 0.0f) e = 0.0f;
+  if (e > 1.0f) e = 1.0f;
+  float afr = 14.70f * (1.0f - e) + 9.77f * e;
+  float rho = 0.737f * (1.0f - e) + 0.789f * e; /* g/cc */
+  float mFuel = mAir / afr;
+  float volCc = mFuel / rho;
+  float flow = gInjFlowCcMin;
+  if (flow < 50.0f) flow = 50.0f;
+  float pAct = gFuelPressureBar;
+  float pRat = gFuelPressureRatedBar;
+  if (pAct < 0.5f) pAct = 0.5f;
+  if (pRat < 0.5f) pRat = 0.5f;
+  flow *= sqrtf(pAct / pRat);
+  float ms = volCc * 60000.0f / flow;
+  if (ms < 0.4f) ms = 0.4f;
+  if (ms > 30.0f) ms = 30.0f;
+  gReqFuelMs = ms;
+}
+
 uint8_t injDutyPctNow(void)
 {
   uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
@@ -315,6 +348,8 @@ void ECU_Loop(void) {
     if (a < -(int8_t)gMaxRetDeg) a = (int8_t)(-gMaxRetDeg);
     ignAdvanceDeg = a;
   }
+  serviceFlexFuel();
+  ECU_UpdateReqFuel();
   serviceAfterStart();
   /* Fuel: direct ms map, or VE% → base PW from MAP/IAT/reqFuel */
   float pw;
@@ -329,25 +364,14 @@ void ECU_Loop(void) {
     if (iatK < 250.0f) iatK = 250.0f;
     /* Ideal-gas style density vs 100 kPa / 293 K reference */
     float dens = (mapAbs / 100.0f) * (293.15f / iatK);
+    /* reqFuel already has disp / cyl / flow / rail-P / ethanol AFR. */
     float baseMs = gReqFuelMs * (ve / 100.0f) * dens;
-    /* Optional scale by injector size vs nominal 220 cc/min */
-    {
-      float pAct = gFuelPressureBar;
-      float pRat = gFuelPressureRatedBar;
-      if (pAct < 0.5f) pAct = 0.5f;
-      if (pRat < 0.5f) pRat = 0.5f;
-      float flowEff = gInjFlowCcMin;
-      if (flowEff < 10.0f) flowEff = 10.0f;
-      /* flow ∝ √(P_rail / P_rated) */
-      flowEff *= sqrtf(pAct / pRat);
-      baseMs *= (220.0f / flowEff);
-    }
     pw = baseMs * 1000.0f * o2FuelMul() * coldStartEnrichMul()
        * afterStartMul() * alsFuelMul() * accelEnrichMul();
   } else {
     gVePct = injMs; /* duty-mode cell (ms) — tuner labels INJ */
     pw = injMs * 1000.0f * o2FuelMul() * coldStartEnrichMul()
-       * afterStartMul() * alsFuelMul() * accelEnrichMul();
+       * afterStartMul() * alsFuelMul() * accelEnrichMul() * flexFuelMul();
   }
   if (launchDecayActive && launchDecayFuelPct > 0.1f) {
     pw *= (1.0f + launchDecayFuelPct * 0.01f);

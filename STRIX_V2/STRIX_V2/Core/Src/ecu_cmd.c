@@ -545,6 +545,15 @@ void handleLine(char *line) {
     } else uartErr("AE", "PARSE");
     return;
   }
+  if (!strncmp(line, "SET:ENGCC,", 10)) {
+    int cc = atoi(line + 10);
+    if (cc < 400) cc = 400;
+    if (cc > 8000) cc = 8000;
+    gEngDispCc = (uint16_t)cc;
+    ECU_Persist_Touch();
+    uartWrite("OK:ENGCC\r\n");
+    return;
+  }
   if (!strncmp(line, "SET:REQFUEL,", 12)) {
     float req = 2.5f, flow = 220.0f, pAct = 3.0f, pRat = 3.0f;
     int n = sscanf(line + 12, "%f,%f,%f,%f", &req, &flow, &pAct, &pRat);
@@ -1002,7 +1011,8 @@ if (!strncmp(line, "SAVE", 4)) {
     {
       char b[24];
       snprintf(b, sizeof b, "OK:SPKGAP,%u\r\n", (unsigned)gSparkDblGapDeg,
-             (unsigned)gBatchAboveRpm, (unsigned)gBatchDutyPct);
+             (unsigned)gBatchAboveRpm, (unsigned)gBatchDutyPct,
+             (unsigned)gEngDispCc, (double)gReqFuelMs);
       uartWrite(b);
     }
     return;
@@ -1077,7 +1087,7 @@ if (!strncmp(line, "SAVE", 4)) {
     char b[280];
     snprintf(b, sizeof b,
              "CFG:%u,%u,%u,CYL:%u,INJMODE:%u,IGNMODE:%u,VEMODE:%u,REQFUEL:%.2f,FLOW:%.0f,"
-             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f,DWELL:%.1f,SPKDBL:%u,SPKGAP:%u,BATCHRPM:%u,BATCHDUTY:%u\r\n",
+             "WHEEL:%u,CAMMODE:%u,BOOST:%u,EOI:%.0f,MAPSCALE:%.0f:%.0f,RPMLIM:%u:%u,DEAD:%.2f,DWELL:%.1f,SPKDBL:%u,SPKGAP:%u,BATCHRPM:%u,BATCHDUTY:%u,ENGCC:%u,REQFUEL:%.2f\r\n",
              (unsigned)gTeeth, (unsigned)gMissing, (unsigned)gTrigAngle,
              (unsigned)gCyl, (unsigned)gInjMode, (unsigned)gIgnMode,
              (unsigned)gVeMode, (double)gReqFuelMs, (double)gInjFlowCcMin,
@@ -1089,7 +1099,8 @@ if (!strncmp(line, "SAVE", 4)) {
              (double)gInjDeadMs,
              (double)(gDwellNomUs * 0.001f), (unsigned)gSparkDouble,
              (unsigned)gSparkDblGapDeg,
-             (unsigned)gBatchAboveRpm, (unsigned)gBatchDutyPct);
+             (unsigned)gBatchAboveRpm, (unsigned)gBatchDutyPct,
+             (unsigned)gEngDispCc, (double)gReqFuelMs);
     uartWrite(b);
     return;
   }
