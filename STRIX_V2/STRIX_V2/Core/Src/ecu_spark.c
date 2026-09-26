@@ -9,6 +9,7 @@
 #include "ecu_maps.h"
 #include "ecu_runtime.h"
 #include "ecu_internal.h"
+#include "ecu_oc.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -171,14 +172,18 @@ void scheduleCoils(uint32_t now)
 #endif
 
 #if CFG_COIL_SMART
-    /* Charge before TDC; spark at fire. Never start after TDC. */
-    /* dwellDeg at cranking is often < band, so "until > band" never started
-     * the coil; atFire then charged and dumped in the same pass (no pulse). */
-    if (!coilFired[i] && armed && !coilState[i] && coilPulseN[i] == 0 &&
-        (until <= dwellDeg || atFire || until < 40.0f)) {
-      ECU_IGN_HI(i);
-      coilState[i] = 1;
-      coilStartUs[i] = now;
+    if (!coilFired[i] && armed && !ECU_Oc_IgnBusy(i) && coilPulseN[i] == 0 &&
+        (until <= dwellDeg + 15.0f || atFire || until < 50.0f) &&
+        degPerUs > 0.0001f) {
+      uint32_t toFire = (uint32_t)(until / degPerUs);
+      uint32_t dneed = dwellTargetUs ? dwellTargetUs : (uint32_t)CFG_DWELL_NOM_US;
+      if (toFire > 60000u) toFire = 60000u;
+      uint32_t toHi = (toFire > dneed) ? (toFire - dneed) : 0u;
+      uint32_t wid = (toFire > toHi) ? (toFire - toHi) : dneed;
+      if (wid < 800u) wid = 800u;
+      ECU_Oc_PulseIgn(i, toHi, wid);
+      coilStartUs[i] = now + toHi;
+      lastCoilFireUs[i] = now + toHi + wid;
     }
     {
       uint32_t dneed = dwellTargetUs ? dwellTargetUs : (uint32_t)CFG_DWELL_NOM_US;
@@ -232,10 +237,10 @@ void scheduleCoils(uint32_t now)
       if (rpmLive > 4000 || moved > (need + 25.0f) || age > 12000u) {
         coilPulseN[i] = 0;
         coilFired[i] = 1;
-      } else if (moved >= need) {
-        ECU_IGN_HI(i);
-        coilState[i] = 1;
-        coilStartUs[i] = now;
+      } else if (moved >= need && !ECU_Oc_IgnBusy(i)) {
+        uint32_t d2 = dwellTargetUs ? dwellTargetUs / 2u : 1500u;
+        if (d2 < 800u) d2 = 800u;
+        ECU_Oc_PulseIgn(i, 0, d2);
         coilPulseN[i] = 2;
         coilFired[i] = 0;
       }

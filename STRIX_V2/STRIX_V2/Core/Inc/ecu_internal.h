@@ -2,6 +2,7 @@
 #define ECU_INTERNAL_H
 #include <stdint.h>
 #include "ecu_flash.h"
+#include "ecu_oc.h"
 
 void uartWrite(const char *s);
 void uartErr(const char *cmd, const char *why);

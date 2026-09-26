@@ -9,12 +9,21 @@
 #include "ecu_maps.h"
 #include "ecu_runtime.h"
 #include "ecu_internal.h"
+#include "ecu_oc.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdint.h>
 
 /* ---- lines 1302-1517 ---- */
+static float angDelta(float deg, float ref, float cycle)
+{
+  float d = deg - ref;
+  while (d < 0.0f) d += cycle;
+  while (d >= cycle) d -= cycle;
+  return d;
+}
+
 void serviceInjection(void) {
   uint32_t now = micros();
 
@@ -115,7 +124,8 @@ void serviceInjection(void) {
         if (st != 0 && injStamp[i] == st &&
             injEndUs[i] && (int32_t)(now - injEndUs[i]) < 20000)
           continue;
-        ECU_INJ_HI(i);
+        if (!ECU_Oc_InjBusy(i))
+          ECU_Oc_PulseInj(i, 0, pwc);
         injOn[i] = 1;
         injFiredCyc[i] = 1;
         injStamp[i] = st;
@@ -211,7 +221,16 @@ void serviceInjection(void) {
         if (rpmLive < 200) { if (pwc < 3000) pwc = 3000; }
         else if (pwc < 1000) pwc = 1000;
         if (pwc > 20000) pwc = 20000;
-        ECU_INJ_HI(i);
+        {
+          uint32_t delay = 0;
+          if (degPerUs > 0.0001f) {
+            float toSoi = angDelta(deg, soi, cycle);
+            if (toSoi > 1.0f && toSoi < 80.0f)
+              delay = (uint32_t)(toSoi / degPerUs);
+          }
+          if (!ECU_Oc_InjBusy(i))
+            ECU_Oc_PulseInj(i, delay, pwc);
+        }
         injOn[i] = 1;
         injFiredCyc[i] = 0;
         injStamp[i] = seq

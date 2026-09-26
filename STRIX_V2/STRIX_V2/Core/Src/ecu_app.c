@@ -254,6 +254,7 @@ void ECU_Init(void) {
   allOutputsOff();
 
   ECU_CrankCam_Start();
+  ECU_Oc_Init();
 
   /* IWDG armed from ECU_Loop after USB has 2 s to enumerate — early IWDG
    * reset loops look like "no COM port". */
