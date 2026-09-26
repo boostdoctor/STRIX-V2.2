@@ -1127,7 +1127,7 @@ class EngineSettingsDialog(QDialog):
         settings["inj_mode"] = inj
         settings["run_mode"] = "Sequential" if (ign == "Sequential" and inj == "Sequential") else "Batch"
         settings["cam_home"] = self.cam_home.isChecked()
-        settings["batch_above_rpm"] = int(settings.get("batch_above_rpm") or 3000)
+        settings["batch_above_rpm"] = int(settings.get("batch_above_rpm") or 6500)
         if hasattr(self, "fuel_mode"):
             settings["ve_mode"] = (self.fuel_mode.currentText() == "VE")
             if hasattr(self, "ve_mode_cb"):

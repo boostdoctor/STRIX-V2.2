@@ -104,14 +104,14 @@ uint32_t aseStartMs = 0;
 uint8_t  aseActive  = 0;
 uint8_t  wasRunning = 0;
 /* Injection mode: 0=AUTO 1=BATCH 2=SEQUENTIAL 3=HYBRID (seq below RPM, batch above) */
-volatile uint8_t  gInjMode = 2;          /* default sequential */
+volatile uint8_t  gInjMode = 3;          /* hybrid seq→batch */
 volatile uint8_t  gIgnMode = 1;          /* default sequential */
 volatile uint8_t  gCoilType = 0;
 volatile uint8_t  gCoilChargeMode = 0;
 volatile uint16_t gDwellNomUs = CFG_DWELL_NOM_US; /* tuner charge time */
 volatile uint8_t  gSparkDouble = 0;              /* 2nd spark per event */
 volatile uint8_t  gSparkDblGapDeg = 8;           /* crank deg first→second */
-volatile uint16_t gBatchAboveRpm = 3000; /* hybrid switch point */
+volatile uint16_t gBatchAboveRpm = 6500; /* seq below / batch above */
 uint16_t adcFlex = 0;
 float    engEthanol = 0.0f;
 uint8_t  gFlexEnable = 0;

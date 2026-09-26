@@ -30,9 +30,9 @@ def default_engine_settings() -> dict[str, Any]:
         "throttle_type": "Cable",  # Cable | DBW
         "idle_control": "Disabled",  # Disabled | Single wire PWM | Dual wire
         "run_mode": "Batch",  # Batch | Sequential (combined ign+inj)
-        "inj_mode": "Batch",
+        "inj_mode": "Sequential",
         "ign_mode": "Wasted Spark",
-        "batch_above_rpm": 3000,
+        "batch_above_rpm": 6500,
         "fp_prime_ms": 2000,
         "start_prime_ms": 50,
         "start_prime_enable": True,

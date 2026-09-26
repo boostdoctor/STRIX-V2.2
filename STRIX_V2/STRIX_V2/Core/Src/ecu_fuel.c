@@ -89,6 +89,9 @@ void serviceInjection(void) {
       uint8_t a = bank14 ? 1u : 2u;
       uint8_t b = bank14 ? 4u : 3u;
       uint16_t pwc = pw;
+      /* High-RPM / high-IDC batch: half the 720° PW every 360°. */
+      if (!injSequentialActive() && rpmLive >= 2000)
+        pwc = (uint16_t)((pw + 1u) / 2u);
       if (rpmLive < 200 && pwc < 2500) pwc = 2500;
       else if (pwc < 1000) pwc = 1000;
       if (rpmLive > 0 && rpmLive < 500 && pwc > 4000) pwc = 4000;

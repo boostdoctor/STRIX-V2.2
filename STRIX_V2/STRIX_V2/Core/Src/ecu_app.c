@@ -94,13 +94,36 @@ uint8_t ignSequentialActive(void)
   return (gIgnMode == 1) ? 1u : 0u;
 }
 
+uint8_t injDutyPctNow(void)
+{
+  uint32_t T = toothPeriodFilt ? toothPeriodFilt : toothPeriodUs;
+  uint8_t teeth = (gTeeth > 1) ? gTeeth : 36;
+  uint8_t n = (gCyl >= 2 && gCyl <= MAX_CYL) ? gCyl : 4;
+  if (T < 40u || teeth < 2)
+    return 0;
+  uint32_t ev = (T * (uint32_t)teeth * 2u) / n; /* 180° on 4-cyl */
+  if (ev < 500u)
+    return 100;
+  uint32_t pct = ((uint32_t)injPwUs * 100u) / ev;
+  if (pct > 100u) pct = 100u;
+  return (uint8_t)pct;
+}
+
 uint8_t injSequentialActive(void)
 {
-  if (gInjMode == 2)
-    return 1u;
-  if (gInjMode == 3)
-    return (rpmLive < gBatchAboveRpm) ? 1u : 0u;
-  return 0;
+  /* 0=auto/hybrid 1=force batch 2=seq-prefer 3=hybrid */
+  if (gInjMode == 1)
+    return 0;
+  uint16_t thr = gBatchAboveRpm ? gBatchAboveRpm : 6500;
+  if (thr < 2000) thr = 2000;
+  if (thr > 12000) thr = 12000;
+  uint8_t duty = injDutyPctNow();
+  static uint8_t lat = 1;
+  if (rpmLive >= (int)thr || duty >= 75)
+    lat = 0; /* async batch: 360° half-PW */
+  else if (rpmLive + 200 < (int)thr && duty < 70)
+    lat = 1; /* sequential 720° */
+  return lat;
 }
 
 /* ── Cam (720° phase) ───────────────────────────────────────── */
