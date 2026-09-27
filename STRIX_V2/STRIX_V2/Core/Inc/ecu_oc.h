@@ -8,4 +8,5 @@ void ECU_Oc_PulseInj(uint8_t ch, uint32_t delayUs, uint32_t widthUs);
 uint8_t ECU_Oc_IgnBusy(uint8_t ch);
 uint8_t ECU_Oc_InjBusy(uint8_t ch);
 void ECU_Oc_CancelAll(void);
+void ECU_Oc_Poll(void);
 #endif

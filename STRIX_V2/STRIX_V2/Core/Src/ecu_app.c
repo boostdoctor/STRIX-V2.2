@@ -333,6 +333,7 @@ void ECU_Loop(void) {
   /* Time-critical first: coils / injectors before slow ADC & closed-loop */
   scheduleCoils(micros());
   serviceInjection();
+  ECU_Oc_Poll();
 
   readSensors(); /* only 2 ADC channels per pass */
 
