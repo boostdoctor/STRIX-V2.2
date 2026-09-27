@@ -136,8 +136,6 @@ int main(void)
       /* ADC/DMA skipped — HAL_ADC_Init Error_Handler froze the core
        * (4 blinks then dark). TIM5/2 + lite ECU after USB is up. */
       if (stage == 0u && ms > 2500u) {
-        MX_DMA_Init();
-        MX_ADC1_Init();
         MX_TIM5_Init();
         MX_TIM2_Init();
         MX_TIM3_Init();

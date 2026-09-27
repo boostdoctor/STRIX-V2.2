@@ -31,21 +31,18 @@ static uint8_t tim9_present(void)
 
 static uint16_t poll_one(uint32_t ch)
 {
-  ADC_ChannelConfTypeDef s = {0};
-  s.Channel = ch;
-  s.Rank = 1;
-  s.SamplingTime = ADC_SAMPLETIME_84CYCLES;
-  if (HAL_ADC_ConfigChannel(&hadc1, &s) != HAL_OK)
-    return 0;
-  if (HAL_ADC_Start(&hadc1) != HAL_OK)
-    return 0;
-  if (HAL_ADC_PollForConversion(&hadc1, 5) != HAL_OK) {
-    HAL_ADC_Stop(&hadc1);
-    return 0;
+  if ((ADC1->CR2 & ADC_CR2_ADON) == 0)
+    ADC1->CR2 = ADC_CR2_ADON;
+  ADC1->SQR1 = 0; /* 1 conversion */
+  ADC1->SQR3 = (ch & 0x1Fu);
+  ADC1->SR = 0;
+  ADC1->CR2 |= ADC_CR2_SWSTART;
+  uint32_t t0 = HAL_GetTick();
+  while ((ADC1->SR & ADC_SR_EOC) == 0) {
+    if ((HAL_GetTick() - t0) > 2u)
+      return 0;
   }
-  uint16_t v = (uint16_t)HAL_ADC_GetValue(&hadc1);
-  HAL_ADC_Stop(&hadc1);
-  return v;
+  return (uint16_t)ADC1->DR;
 }
 
 /* Optional: complete DMA stream setup if MSP left handle uninitialised */
@@ -63,68 +60,22 @@ static void adc_cfg_rank(uint32_t ch, uint32_t rank)
 void ECU_Adc_Init(void)
 {
   memset((void *)adcDmaBuf, 0, sizeof(adcDmaBuf));
-  ecuAdcDmaRunning = 0;
+  ecuAdcDmaRunning = 0; /* poll only — DMA/HAL_ADC_Init locked the core */
 
-  MX_DMA_Init();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_ADC1_CLK_ENABLE();
+  GPIO_InitTypeDef g = {0};
+  g.Pin = GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_7;
+  g.Mode = GPIO_MODE_ANALOG;
+  g.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &g);
 
-  if (hadc1.Instance == NULL) {
-    hadc1.Instance = ADC1;
-    hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
-    hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-    hadc1.Init.ScanConvMode = ENABLE;
-    hadc1.Init.ContinuousConvMode = ENABLE;
-    hadc1.Init.DiscontinuousConvMode = DISABLE;
-    hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-    hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-    hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-    hadc1.Init.NbrOfConversion = 6;
-    hadc1.Init.DMAContinuousRequests = ENABLE;
-    hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
-    if (HAL_ADC_Init(&hadc1) != HAL_OK) {
-      /* Keep Instance so readAdc() can poll. */
-      hadc1.Instance = ADC1;
-    } else {
-      adc_cfg_rank(ADC_CHANNEL_1, 1);
-      adc_cfg_rank(ADC_CHANNEL_2, 2);
-      adc_cfg_rank(ADC_CHANNEL_3, 3);
-      adc_cfg_rank(ADC_CHANNEL_4, 4);
-      adc_cfg_rank(ADC_CHANNEL_5, 5);
-      adc_cfg_rank(ADC_CHANNEL_7, 6);
-    }
-  }
-
-#if defined(HAL_ADC_MODULE_ENABLED)
-  /* Ensure hdma_adc1 is initialised and linked (idempotent if MSP already did it) */
-  if (hadc1.DMA_Handle == NULL)
-    ECU_DMA_ADC1_Config(&hadc1);
-  /*
-   * Try DMA circular into adcDmaBuf.
-   * CubeMX: Scan ON, 8 ranks, DMA Continuous Requests ON,
-   * ContinuousConvMode ON, ExternalTrig = Software start
-   * (F411 cannot select TIM9_TRGO for ADC1).
-   *
-   * Length = ECU_ADC_RANK_COUNT so each sequence fills one frame.
-   */
-  if (hadc1.DMA_Handle != NULL &&
-      HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adcDmaBuf, ECU_ADC_RANK_COUNT) == HAL_OK) {
-    ecuAdcDmaRunning = 1;
-  } else {
-    /* Polling path: single-channel ConfigChannel per readAdc() */
-    ecuAdcDmaRunning = 0;
-    (void)HAL_ADC_Stop_DMA(&hadc1);
-  }
-#endif
-
-#if defined(HAL_TIM_MODULE_ENABLED)
-  /*
-   * Continuous+DMA needs no timer trigger.
-   * Optional: if you use TIM4_TRGO instead, start TIM4 base here.
-   */
-  if (tim9_present()) {
-    /* unused on F411 continuous path; left for boards that still enable TIM9 */
-    (void)0;
-  }
-#endif
+  /* ADC clock PCLK2/4, ADON, 84-cycle sample. No DMA, no scan. */
+  ADC->CCR = (ADC->CCR & ~ADC_CCR_ADCPRE) | ADC_CCR_ADCPRE_0;
+  ADC1->CR1 = 0;
+  ADC1->CR2 = ADC_CR2_ADON;
+  ADC1->SMPR2 = (5u << 3) | (5u << 6) | (7u << 9) | (7u << 12) | (5u << 15) | (5u << 21);
+  hadc1.Instance = ADC1;
 }
 
 void ECU_Adc_Stop(void)
