@@ -8,6 +8,7 @@
 #include "ecu_adc.h"
 #include "ecu_pins.h"
 #include "main.h"
+#include "dma.h"
 #include <string.h>
 
 volatile uint16_t adcDmaBuf[ECU_ADC_RANK_COUNT];
@@ -50,10 +51,47 @@ static uint16_t poll_one(uint32_t ch)
 /* Optional: complete DMA stream setup if MSP left handle uninitialised */
 void ECU_DMA_ADC1_Config(ADC_HandleTypeDef *hadc);
 
+static void adc_cfg_rank(uint32_t ch, uint32_t rank)
+{
+  ADC_ChannelConfTypeDef s = {0};
+  s.Channel = ch;
+  s.Rank = rank;
+  s.SamplingTime = ADC_SAMPLETIME_84CYCLES;
+  (void)HAL_ADC_ConfigChannel(&hadc1, &s);
+}
+
 void ECU_Adc_Init(void)
 {
   memset((void *)adcDmaBuf, 0, sizeof(adcDmaBuf));
   ecuAdcDmaRunning = 0;
+
+  MX_DMA_Init();
+
+  if (hadc1.Instance == NULL) {
+    hadc1.Instance = ADC1;
+    hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+    hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+    hadc1.Init.ScanConvMode = ENABLE;
+    hadc1.Init.ContinuousConvMode = ENABLE;
+    hadc1.Init.DiscontinuousConvMode = DISABLE;
+    hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+    hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+    hadc1.Init.NbrOfConversion = 6;
+    hadc1.Init.DMAContinuousRequests = ENABLE;
+    hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
+    if (HAL_ADC_Init(&hadc1) != HAL_OK) {
+      /* Keep Instance so readAdc() can poll. */
+      hadc1.Instance = ADC1;
+    } else {
+      adc_cfg_rank(ADC_CHANNEL_1, 1);
+      adc_cfg_rank(ADC_CHANNEL_2, 2);
+      adc_cfg_rank(ADC_CHANNEL_3, 3);
+      adc_cfg_rank(ADC_CHANNEL_4, 4);
+      adc_cfg_rank(ADC_CHANNEL_5, 5);
+      adc_cfg_rank(ADC_CHANNEL_7, 6);
+    }
+  }
 
 #if defined(HAL_ADC_MODULE_ENABLED)
   /* Ensure hdma_adc1 is initialised and linked (idempotent if MSP already did it) */

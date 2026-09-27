@@ -198,7 +198,7 @@ void ECU_Init(void) {
   ECU_Serial_Init();
   fpPrimeUntilMs = millis() + (uint32_t)gFpPrimeMs; /* fuel pump prime on power-up */
 
-  /* ADC DMA skipped at boot — it was hanging after the USB blink. */
+  ECU_Adc_Init();
   ECU_Flex_Init();
 
   vvtMapsDefault();

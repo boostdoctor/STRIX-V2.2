@@ -136,6 +136,8 @@ int main(void)
       /* ADC/DMA skipped — HAL_ADC_Init Error_Handler froze the core
        * (4 blinks then dark). TIM5/2 + lite ECU after USB is up. */
       if (stage == 0u && ms > 2500u) {
+        MX_DMA_Init();
+        MX_ADC1_Init();
         MX_TIM5_Init();
         MX_TIM2_Init();
         MX_TIM3_Init();
@@ -245,7 +247,7 @@ static void MX_ADC1_Init(void)
   hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
-    Error_Handler();
+    /* Do not freeze — ECU_Adc_Init / poll still run. */
   }
 
   /* Rank 1 — MAP PA1 */
@@ -254,14 +256,12 @@ static void MX_ADC1_Init(void)
   sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
-    Error_Handler();
   }
   /* Rank 2 — TPS PA2 */
   sConfig.Channel = ADC_CHANNEL_2;
   sConfig.Rank = 2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
-    Error_Handler();
   }
   /* Rank 3 — CLT/ECT PA3 (NTC — longer sample) */
   sConfig.Channel = ADC_CHANNEL_3;
@@ -269,14 +269,12 @@ static void MX_ADC1_Init(void)
   sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
-    Error_Handler();
   }
   /* Rank 4 — IAT PA4 (NTC) */
   sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = 4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
-    Error_Handler();
   }
   /* Rank 5 — O2 PA5 */
   sConfig.Channel = ADC_CHANNEL_5;
@@ -284,14 +282,12 @@ static void MX_ADC1_Init(void)
   sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
-    Error_Handler();
   }
   /* Rank 6 — VBATT PA7 */
   sConfig.Channel = ADC_CHANNEL_7;
   sConfig.Rank = 6;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
-    Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
 
